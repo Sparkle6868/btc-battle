@@ -1,7 +1,7 @@
 // Perpetual Futures telemetry: Binance USD-M Futures (Funding Rate, OI, L/S Ratio, forceOrder liquidations)
 // with OKX USDT-SWAP REST fallback
-import { fetchJson } from './net.js?v=f5b2a28a';
-import { lsGet, lsSet } from './storage.js?v=f5b2a28a';
+import { fetchJson } from './net.js?v=965311c0';
+import { lsGet, lsSet } from './storage.js?v=965311c0';
 
 const BIN_FAPI = 'https://fapi.binance.com';
 const BIN_FWS = 'wss://fstream.binance.com';
@@ -273,7 +273,7 @@ export class FuturesFeed {
     if (this.ws) { try { this.ws.close(); } catch {} }
     let sock;
     try {
-      sock = new WebSocket(`${BIN_FWS}/ws/${sym.toLowerCase()}@forceOrder`);
+      sock = new WebSocket(`${BIN_FWS}/market/ws/${sym.toLowerCase()}@forceOrder`);
     } catch { return; }
     this.ws = sock;
     sock.onopen = () => {

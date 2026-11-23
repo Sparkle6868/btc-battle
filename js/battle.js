@@ -1,6 +1,6 @@
 // 战场动画：Canvas 2D，蓝军（多）在左，红军（空）在右
-import { t as tr, fmtUsd } from './i18n.js?v=f5b2a28a';
-import { makeUnitSprites, drawStandard, Fortress, UNIT } from './units.js?v=f5b2a28a';
+import { t as tr, fmtUsd } from './i18n.js?v=965311c0';
+import { makeUnitSprites, drawStandard, Fortress, UNIT } from './units.js?v=965311c0';
 const TAU = Math.PI * 2;
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -262,7 +262,7 @@ export class Battle {
     const isLong = side === 'long', victim = isLong ? 'blue' : 'red';
     const ty = rand(this.laneTop, this.laneBot), fx = this.frontX(ty), base = victim === 'blue' ? this.baseL : this.baseR;
     const tx = lerp(fx + (victim === 'blue' ? -24 : 24), base, rand(0.12, 0.78));
-    const lvl = usd >= this.th.whale ? 3 : usd >= this.th.heavy ? 2 : 1;
+    const lvl = usd >= this.th.heavy ? 3 : usd >= this.th.shell ? 2 : 1;
 
     // 主闪电 + 高阶分叉闪电
     const segs = 10 + lvl * 2, sx0 = tx + rand(-45, 45);

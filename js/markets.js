@@ -1,5 +1,5 @@
-import { fetchJson, binFetch } from './net.js?v=f5b2a28a';
-import { lsGet, lsSet, lsDel } from './storage.js?v=f5b2a28a';
+import { fetchJson, binFetch } from './net.js?v=965311c0';
+import { lsGet, lsSet, lsDel } from './storage.js?v=965311c0';
 // 币种宇宙：Binance（USDT 现货）为主，OKX（USDT 现货）、Coinbase（USD）补充；本地缓存 + 24h 行情排序
 const UKEY = 'cw_univ_v2', UTTL = 12 * 3600e3;
 const BIN_REST = ['https://api.binance.com', 'https://data-api.binance.vision'];

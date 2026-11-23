@@ -1,12 +1,12 @@
-import { FeedManager, SOURCES, fetchMiniTickers, fetchBinance1s, fetchBinanceAggTrades, fetchOkxTrades, fetchCoinbaseTrades } from './feeds.js?v=f5b2a28a';
-import { PRESET, universe, loadUniverse, loadTickers, fetchQuoteVolume, thresholdsFor, search as searchCoins, topByVolume, recents, pushRecent, favorites, toggleFav, primarySource } from './markets.js?v=f5b2a28a';
-import { Battle } from './battle.js?v=f5b2a28a';
-import { t as T, lang, setLang, onLang, applyI18n, fmtUsd, fmtShort, fmtNum, escH } from './i18n.js?v=f5b2a28a';
-import { AudioController } from './music.js?v=f5b2a28a';
-import { initChat } from './chat.js?v=f5b2a28a';
-import { lsGet, lsSet } from './storage.js?v=f5b2a28a';
-import { FuturesFeed } from './futures.js?v=f5b2a28a';
-import { initShare } from './share.js?v=f5b2a28a';
+import { FeedManager, SOURCES, fetchMiniTickers, fetchBinance1s, fetchBinanceAggTrades, fetchOkxTrades, fetchCoinbaseTrades } from './feeds.js?v=965311c0';
+import { PRESET, universe, loadUniverse, loadTickers, fetchQuoteVolume, thresholdsFor, search as searchCoins, topByVolume, recents, pushRecent, favorites, toggleFav, primarySource } from './markets.js?v=965311c0';
+import { Battle } from './battle.js?v=965311c0';
+import { t as T, lang, setLang, onLang, applyI18n, fmtUsd, fmtShort, fmtNum, escH } from './i18n.js?v=965311c0';
+import { AudioController } from './music.js?v=965311c0';
+import { initChat } from './chat.js?v=965311c0';
+import { lsGet, lsSet } from './storage.js?v=965311c0';
+import { FuturesFeed } from './futures.js?v=965311c0';
+import { initShare } from './share.js?v=965311c0';
 
 const $ = (id) => document.getElementById(id);
 const pad = (n) => String(n).padStart(2, '0');
@@ -836,15 +836,18 @@ const futures = new FuturesFeed({
   onData(st) { perpState = st; if (!document.hidden) renderPerp(); },
   onLiq(ev) {
     if (document.hidden || !ev || !(ev.usd > 0)) return;
-    const th = cfg().th, now = Date.now(), minFx = Math.max(500, th.shell * 0.5);
+    const th = cfg().th, now = Date.now();
+    const minFx = Math.max(500, th.shell * 0.04);
+    const minSfx = Math.max(2000, th.shell * 0.2);
+    const minBanner = Math.max(10000, th.shell);
     if (ev.usd >= minFx && (now - lastLiqFx >= 180 || ev.usd >= th.heavy)) {
       lastLiqFx = now;
       battle.liquidate(ev.side, ev.usd);
     }
-    if (ev.usd >= th.shell) {
+    if (ev.usd >= minSfx) {
       audio.impact(ev.usd * 50000 / th.shell, ev.side === 'long' ? 'red' : 'blue');
     }
-    if (ev.usd >= th.heavy && now - lastLiqBanner >= 2500) {
+    if (ev.usd >= minBanner && now - lastLiqBanner >= 2500) {
       lastLiqBanner = now;
       showBanner(T('liqBanner', ev.side === 'long', fmtUsd(ev.usd)), 'liq', 2400, false);
     }

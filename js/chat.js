@@ -1,7 +1,7 @@
 // 匿名喊单评论区 + 弹幕：Supabase REST（读/写）+ Realtime WebSocket（postgres_changes INSERT），不依赖 SDK
 // 只使用公开的 publishable key；表开启 RLS，匿名只能读和发，数据库端限流（同 IP 3 秒 1 条 / 每分钟 10 条）
-import { t as T, onLang, lang as _lang } from './i18n.js?v=f5b2a28a';
-import { lsGet, lsSet, lsDel, ssGet, ssSet } from './storage.js?v=f5b2a28a';
+import { t as T, onLang, lang as _lang } from './i18n.js?v=965311c0';
+import { lsGet, lsSet, lsDel, ssGet, ssSet } from './storage.js?v=965311c0';
 
 const SB_URL = 'https://gtdvykkdvpzsnhlqlgun.supabase.co';
 const SB_KEY = 'sb_publishable_i5XDXdgwAMTA0PHFCWTeew_qDAv9-pU';
