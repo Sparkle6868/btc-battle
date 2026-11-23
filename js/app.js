@@ -1,9 +1,12 @@
-import { FeedManager, SOURCES, fetchMiniTickers, fetchBinance1s, fetchBinanceAggTrades, fetchOkxTrades, fetchCoinbaseTrades } from './feeds.js?v=1a8cff89';
-import { PRESET, universe, loadUniverse, loadTickers, fetchQuoteVolume, thresholdsFor, search as searchCoins, topByVolume, recents, pushRecent, favorites, toggleFav, primarySource } from './markets.js?v=1a8cff89';
-import { Battle } from './battle.js?v=1a8cff89';
-import { t as T, lang, setLang, onLang, applyI18n, fmtUsd, fmtShort, fmtNum, escH } from './i18n.js?v=1a8cff89';
-import { AudioController } from './music.js?v=1a8cff89';
-import { initChat } from './chat.js?v=1a8cff89';
+import { FeedManager, SOURCES, fetchMiniTickers, fetchBinance1s, fetchBinanceAggTrades, fetchOkxTrades, fetchCoinbaseTrades } from './feeds.js?v=f5b2a28a';
+import { PRESET, universe, loadUniverse, loadTickers, fetchQuoteVolume, thresholdsFor, search as searchCoins, topByVolume, recents, pushRecent, favorites, toggleFav, primarySource } from './markets.js?v=f5b2a28a';
+import { Battle } from './battle.js?v=f5b2a28a';
+import { t as T, lang, setLang, onLang, applyI18n, fmtUsd, fmtShort, fmtNum, escH } from './i18n.js?v=f5b2a28a';
+import { AudioController } from './music.js?v=f5b2a28a';
+import { initChat } from './chat.js?v=f5b2a28a';
+import { lsGet, lsSet } from './storage.js?v=f5b2a28a';
+import { FuturesFeed } from './futures.js?v=f5b2a28a';
+import { initShare } from './share.js?v=f5b2a28a';
 
 const $ = (id) => document.getElementById(id);
 const pad = (n) => String(n).padStart(2, '0');
@@ -11,7 +14,7 @@ const pad = (n) => String(n).padStart(2, '0');
 // ---------- 币种配置 ----------
 // M = 当前市场（交易所代码、价格/数量精度）；CF = 当前币的大单/炮弹门槛（BTC、ETH 固定，其它币按 24h 成交额缩放，见 markets.js）
 const params = new URLSearchParams(location.search);
-const wantCoin = (params.get('coin') || localStorage.getItem('cw_coin') || 'btc').toLowerCase().trim();
+const wantCoin = (params.get('coin') || lsGet('cw_coin') || 'btc').toLowerCase().trim();
 let coin = 'btc', M = PRESET.btc, CF = { dp: 2, qdp: 3, ...thresholdsFor('btc') };
 const cfg = () => CF;
 const fmtPx = (p, dp) => p.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp });
@@ -56,19 +59,20 @@ window.__big = () => ({ big: S.big, from: S.bigFrom, th: S.threshold });
 window.__univ = universe; // 调试用
 
 // ---------- 状态 ----------
+let flashT, lastShown = 0;
 const S = {
   src: null, last: 0, shownStr: '', open24h: 0, tradesThisSec: 0,
   buckets: new Array(300).fill(null).map(() => ({ sec: 0, b: 0, s: 0, bu: 0, su: 0, n: 0 })),
   px: new Array(120).fill(null).map(() => ({ sec: 0, p: 0 })), tickDir: 0,
-  book: null, threshold: 0, surge: null, surgeSince: 0, wonFor: null,
+  book: null, threshold: 0, surge: null, surgeSince: 0, surgeHeld: 0, lastRefreshAt: 0, wonFor: null,
   big: [], bigFrom: 0, bigLoading: false, lastAggId: 0, lastTs: 0,
   since: 0, liveSec: null, bfGen: 0, // since: 统计窗口最早的完整秒；liveSec: 本次连接首笔实时成交所在秒
 };
 function resetStats() {
   for (const b of S.buckets) { b.sec = 0; b.b = b.s = b.bu = b.su = b.n = 0; }
   for (const x of S.px) { x.sec = 0; x.p = 0; } S.tickDir = 0;
-  S.book = null; S.last = 0; S.shownStr = ''; S.open24h = 0; S.hi = 0;
-  S.surge = null; S.wonFor = null; smoothS = 0;
+  S.book = null; S.last = 0; S.shownStr = ''; lastShown = 0; S.open24h = 0; S.hi = 0;
+  S.surge = null; S.surgeSince = 0; S.surgeHeld = 0; S.lastRefreshAt = 0; S.wonFor = null; smoothS = 0;
   S.since = 0; S.liveSec = null; S.bfGen++; S.nEma = 0;
   $('price').textContent = '--'; $('chg').textContent = '--'; $('chg').className = 'chg';
   ['hi', 'lo', 'vol'].forEach(id => $(id).textContent = '--');
@@ -277,12 +281,12 @@ const fm = new FeedManager({
   onBook(b) { S.book = b; },
 });
 const sel = $('sourceSel');
-sel.value = params.get('source') || localStorage.getItem('bb_source') || 'auto';
+sel.value = params.get('source') || lsGet('bb_source') || 'auto';
 if (!sel.value) sel.value = 'auto';
 // 断网恢复：若当前不在正常接收，立刻从首选交易所重连（不用等退避计时器，也能从备用源切回 Binance）
 window.addEventListener('offline', statusText);
 window.addEventListener('online', () => { if (!lastStatus || lastStatus[0] !== 'live') fm.start(sel.value, M); });
-sel.onchange = () => { localStorage.setItem('bb_source', sel.value); resetStats(); fm.start(sel.value, M); };
+sel.onchange = () => { lsSet('bb_source', sel.value); resetStats(); fm.start(sel.value, M); };
 
 // ---------- 币种切换 ----------
 const tabs = [...document.querySelectorAll('#coinTabs button[data-coin]')];
@@ -291,11 +295,11 @@ function moveInd() {
   if (on) { ind.style.left = on.offsetLeft + 'px'; ind.style.width = on.offsetWidth + 'px'; }
 }
 function renderChips() {
-  const saved = +localStorage.getItem('cw_th_' + coin);
+  const saved = +lsGet('cw_th_' + coin, 0);
   S.threshold = cfg().chips.includes(saved) ? saved : cfg().defChip;
   $('chips').innerHTML = cfg().chips.map(v => `<button data-v="${v}" class="${v === S.threshold ? 'on' : ''}">${wan(v)}</button>`).join('');
   for (const b of document.querySelectorAll('#chips button')) b.onclick = () => {
-    S.threshold = +b.dataset.v; localStorage.setItem('cw_th_' + coin, S.threshold);
+    S.threshold = +b.dataset.v; lsSet('cw_th_' + coin, S.threshold);
     document.querySelectorAll('#chips button').forEach(x => x.classList.toggle('on', x === b));
     renderTrades();
   };
@@ -327,12 +331,15 @@ async function setCoin(id, { push = true, first = false } = {}) {
   if (!PRESET[id] && !(qv > 0)) { vol = await fetchQuoteVolume(m); if (g !== switchGen) return; qv = vol ? vol.qv : 0; m.qvP = qv; if (!m.qv) m.qv = qv; }
   coin = id; M = m;
   CF = { dp: Math.min(m.dp ?? 2, 10), qdp: id === 'eth' ? 2 : Math.min(m.qdp ?? 3, 3), ...thresholdsFor(id, qv) };
-  localStorage.setItem('cw_coin', id); pushRecent(id);
+  lsSet('cw_coin', id); pushRecent(id);
   const u = new URL(location.href); u.searchParams.set('coin', id);
   if (push && !first) history.pushState({ coin: id }, '', u); else history.replaceState({ coin: id }, '', u);
   const key = tabKey(id);
   $('tab-cur').hidden = key !== 'cur';
-  if (key === 'cur') { $('cur-sym').textContent = m.base; $('mini-cur').textContent = m.last ? fmtPx(m.last, CF.dp) : '--'; $('minich-cur').textContent = ''; }
+  if (key === 'cur') {
+    delete miniPrev.cur; $('mini-cur').className = 'ct-px';
+    $('cur-sym').textContent = m.base; $('mini-cur').textContent = m.last ? fmtPx(m.last, CF.dp) : '--'; $('minich-cur').textContent = '';
+  }
   tabs.forEach(b => { b.classList.toggle('on', b.dataset.coin === key); b.setAttribute('aria-pressed', b.dataset.coin === key); });
   for (const o of sel.options) o.disabled = o.value !== 'auto' && !m[o.value]; // 没上这个交易所的币禁用该数据源
   battle.setThresholds(CF.th);
@@ -343,6 +350,7 @@ async function setCoin(id, { push = true, first = false } = {}) {
   document.title = T('title', m.base);
   requestAnimationFrame(fitHeader);
   fm.start(sel.value, m);
+  futures.start(m);
 }
 tabs.forEach(b => b.onclick = () => setCoin(b.dataset.coin === 'cur' ? coin : b.dataset.coin));
 window.addEventListener('popstate', () => setCoin(new URLSearchParams(location.search).get('coin') || 'btc', { push: false }));
@@ -368,7 +376,7 @@ async function pollMini() {
 pollMini(); setInterval(pollMini, 4000);
 
 // ---------- 价格（逐位滚动） ----------
-const priceEl = $('price'); let flashT, lastShown = 0;
+const priceEl = $('price');
 function renderPrice(str, prevStr) {
   let html = '';
   for (let i = 0; i < str.length; i++) {
@@ -378,7 +386,7 @@ function renderPrice(str, prevStr) {
   priceEl.innerHTML = html;
 }
 setInterval(() => {
-  if (!S.last || S.last === lastShown) return;
+  if (document.hidden || !S.last || S.last === lastShown) return;
   const up = S.last > lastShown, str = '$' + fmtP(S.last);
   if (lastShown) {
     priceEl.classList.remove('up', 'down'); void priceEl.offsetWidth; priceEl.classList.add(up ? 'up' : 'down');
@@ -392,6 +400,7 @@ setInterval(() => {
 }, 100);
 // 24h 涨跌 / 高 / 低 / 量：行情推送就更新（低价币可能很久不跳价）
 function updateMeta() {
+  if (document.hidden) return;
   if (S.last && S.open24h) {
     const ch = (S.last / S.open24h - 1) * 100, el = $('chg');
     el.textContent = (ch >= 0 ? '+' : '') + ch.toFixed(2) + '%'; el.className = 'chg ' + (ch >= 0 ? 'pos' : 'neg');
@@ -399,7 +408,10 @@ function updateMeta() {
   if (S.hi) { $('hi').textContent = fmtP(S.hi); $('lo').textContent = fmtP(S.lo); $('vol').textContent = (S.vol >= 1e6 ? fmtNum(S.vol) : Math.round(S.vol).toLocaleString()) + ' ' + M.base; }
 }
 setInterval(updateMeta, 1000);
-setInterval(() => { $('tps').textContent = T('tps', S.tradesThisSec); S.tradesThisSec = 0;
+setInterval(() => {
+  const n = S.tradesThisSec; S.tradesThisSec = 0;
+  if (document.hidden) return;
+  $('tps').textContent = T('tps', n);
   if ($('trades').querySelector('.empty')) renderTrades(); else tradesNote(); // 提示里的分钟数随时间更新
 }, 1000);
 
@@ -520,6 +532,10 @@ battle.onWhale = (side, usd) => (audio.whale(side), showBanner(T('whale', side =
 let smoothS = 0, musicI = 0.15, musicBpm = 80, musicMood = 0;
 const VICTORY_SEC = 20;
 function refresh() {
+  if (document.hidden) return;
+  const now = Date.now();
+  const dt = S.lastRefreshAt ? Math.min((now - S.lastRefreshAt) / 1000, 1) : 0;
+  S.lastRefreshAt = now;
   const C = M.base;
   const w10 = windowSum(10), w60 = windowSum(60), w300 = windowSum(300);
   const f = (q, u) => `${fmtQ(q)} ${C} · ${fmtUsd(u)}`;
@@ -587,12 +603,13 @@ function refresh() {
   if (!surge && s > 0.3) surge = 'blue'; else if (!surge && s < -0.3) surge = 'red';
   else if (surge === 'blue' && s < 0.2) surge = null; else if (surge === 'red' && s > -0.2) surge = null;
   if (surge !== S.surge) {
-    S.surge = surge; S.surgeSince = Date.now(); S.wonFor = null; battle.setSurge(surge);
+    S.surge = surge; S.surgeSince = now; S.surgeHeld = 0; S.wonFor = null; battle.setSurge(surge);
     if (surge) audio.surge(surge);
     if (surge) showBanner(surge === 'blue' ? T('surgeB') : T('surgeR'), surge, 2400, true);
   }
-  // 胜利：持续压制
-  const held = surge ? (Date.now() - S.surgeSince) / 1000 : 0;
+  // 胜利：仅按前台停留时长累计持续压制，避免切后台误判
+  if (surge) S.surgeHeld += dt;
+  const held = surge ? S.surgeHeld : 0;
   if (surge && held >= VICTORY_SEC && S.wonFor !== surge) {
     S.wonFor = surge; battle.celebrate(surge); audio.fanfare(surge);
     showBanner(surge === 'blue' ? T('winB', VICTORY_SEC) : T('winR', VICTORY_SEC), surge + ' victory', 3200, true);
@@ -605,12 +622,13 @@ function refresh() {
   else { st.textContent = T('stTie'); st.className = 'state'; }
 }
 setInterval(refresh, 400);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { S.lastRefreshAt = Date.now(); refresh(); updateMeta(); renderPerp(); } });
 
 // ---------- 战争配乐 / 音效（默认开启；浏览器禁止无点击自动播放，首次点击/触摸/按键即解锁） ----------
 const audio = new AudioController();
 window.__audio = audio; // 调试用
 const AKEY = 'cw_audio2'; // v2：默认开启（忽略旧版“默认关闭”时存下的设置）
-let AP0 = {}; try { AP0 = JSON.parse(localStorage.getItem(AKEY) || '{}') || {}; } catch {} // 存储损坏时用默认值，不让整页崩掉
+let AP0 = {}; try { AP0 = JSON.parse(lsGet(AKEY, '{}') || '{}') || {}; } catch {} // 存储损坏时用默认值，不让整页崩掉
 const AP = Object.assign({ music: true, sfx: true, vol: 75 }, AP0);
 const audioBtn = $('audioBtn'), pop = $('audioPop'), mInd = $('musicInd');
 $('musicTog').checked = AP.music; $('sfxTog').checked = AP.sfx; $('volRange').value = AP.vol;
@@ -627,7 +645,7 @@ function updateMusicInd() {
   mInd.textContent = locked ? T('mLocked') : !want ? T('mOff') : AP.music ? `♪ ${audio.bpm()} BPM · ${moodLabel()}` : `${T('mSfx')} · ${moodLabel()}`;
 }
 function saveAudio() {
-  localStorage.setItem(AKEY, JSON.stringify(AP));
+  lsSet(AKEY, JSON.stringify(AP));
   audio.apply({ music: AP.music, sfx: AP.sfx, volume: AP.vol / 100 });
   if ((AP.music || AP.sfx) && !audio.running) audio.unlock().then(updateMusicInd); // 开关本身就是一次点击
   updateMusicInd();
@@ -754,10 +772,116 @@ setTimeout(fitHeader, 0);
 // 状态/配乐指示文字长度会变：只在文字或宽度真的变了才重新排版（以前每 500ms 强制重排一次）
 setInterval(() => { if (document.hidden) return; const sig = $('statusText').textContent + '|' + mInd.textContent + '|' + $('cur-sym').textContent + '|' + innerWidth; if (sig !== fitSig) { fitSig = sig; fitHeader(); } }, 500);
 
+// ---------- 永续合约视角 ----------
+let perpState = { available: false };
+function fmtCountdown(ts) {
+  const sec = Math.max(0, Math.floor((ts - Date.now()) / 1000));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+function renderPerp() {
+  const card = $('perpCard'); if (!card) return;
+  const st = perpState;
+  card.classList.toggle('na', !st.available);
+  const srcEl = $('perpSrc');
+  srcEl.textContent = st.available ? `${SOURCES[st.src]?.name || st.src} · ${st.symbol}` : T('perpNone');
+  srcEl.classList.toggle('on', !!st.available);
+
+  const fEl = $('perpFund');
+  if (st.available && st.funding != null && isFinite(st.funding)) {
+    const pct = st.funding * 100;
+    fEl.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(4)}%`;
+    fEl.className = 'perp-v ' + (pct > 0 ? 'pos' : pct < 0 ? 'neg' : '');
+    $('perpNext').textContent = st.nextFunding > Date.now() ? T('perpNext', fmtCountdown(st.nextFunding)) : '--';
+  } else {
+    fEl.textContent = '--'; fEl.className = 'perp-v'; $('perpNext').textContent = '--';
+  }
+
+  if (st.available && st.oiUsd > 0) {
+    $('perpOi').textContent = fmtUsd(st.oiUsd);
+    $('perpOiQty').textContent = st.oiQty > 0 ? `${fmtQ(st.oiQty)} ${M.base}` : '--';
+  } else {
+    $('perpOi').textContent = '--'; $('perpOiQty').textContent = '--';
+  }
+
+  if (st.available && st.longRatio != null && st.shortRatio != null) {
+    const lp = Math.round(st.longRatio * 100), sp = 100 - lp;
+    $('perpLs').textContent = `${lp}% : ${sp}%` + (st.lsRatio != null ? ` (${st.lsRatio.toFixed(2)})` : '');
+    $('perpLsB').style.width = lp + '%';
+    $('perpLsR').style.width = sp + '%';
+  } else {
+    $('perpLs').textContent = '--';
+    $('perpLsB').style.width = '50%';
+    $('perpLsR').style.width = '50%';
+  }
+
+  const lqEl = $('perpLiq'), lqSub = $('perpLiqSub'), lastEl = $('perpLastLiq');
+  if (st.available && st.hasLiqStream) {
+    const tot = (st.liqLong5m || 0) + (st.liqShort5m || 0);
+    lqEl.textContent = fmtUsd(tot);
+    lqSub.textContent = tot > 0 ? T('perpLiqPair', fmtUsd(st.liqLong5m || 0), fmtUsd(st.liqShort5m || 0)) : T('perpLiqWait');
+  } else {
+    lqEl.textContent = '--';
+    lqSub.textContent = st.available ? T('perpLiqNa') : '--';
+  }
+  if (st.lastLiq) {
+    lastEl.textContent = T(st.lastLiq.side === 'long' ? 'perpLastL' : 'perpLastS', fmtUsd(st.lastLiq.usd));
+    lastEl.className = 'perp-last show ' + st.lastLiq.side;
+  } else {
+    lastEl.textContent = ''; lastEl.className = 'perp-last';
+  }
+}
+let lastLiqFx = 0, lastLiqBanner = 0;
+const futures = new FuturesFeed({
+  onData(st) { perpState = st; if (!document.hidden) renderPerp(); },
+  onLiq(ev) {
+    if (document.hidden || !ev || !(ev.usd > 0)) return;
+    const th = cfg().th, now = Date.now(), minFx = Math.max(500, th.shell * 0.5);
+    if (ev.usd >= minFx && (now - lastLiqFx >= 180 || ev.usd >= th.heavy)) {
+      lastLiqFx = now;
+      battle.liquidate(ev.side, ev.usd);
+    }
+    if (ev.usd >= th.shell) {
+      audio.impact(ev.usd * 50000 / th.shell, ev.side === 'long' ? 'red' : 'blue');
+    }
+    if (ev.usd >= th.heavy && now - lastLiqBanner >= 2500) {
+      lastLiqBanner = now;
+      showBanner(T('liqBanner', ev.side === 'long', fmtUsd(ev.usd)), 'liq', 2400, false);
+    }
+  },
+});
+setInterval(() => {
+  if (!document.hidden && perpState.available && perpState.nextFunding > Date.now()) {
+    $('perpNext').textContent = T('perpNext', fmtCountdown(perpState.nextFunding));
+  }
+}, 1000);
+
+// ---------- 一键战报分享 ----------
+initShare(() => {
+  const w60 = windowSum(60), w300 = windowSum(300);
+  const bp = Math.round((0.5 + 0.5 * smoothS) * 100);
+  return {
+    coin: M.base,
+    pair: $('pair').textContent,
+    priceStr: S.last ? '$' + fmtP(S.last) : '--',
+    chgPct: S.open24h && S.last ? (S.last / S.open24h - 1) * 100 : null,
+    hiStr: S.hi ? fmtP(S.hi) : '--',
+    loStr: S.lo ? fmtP(S.lo) : '--',
+    bluePow: bp,
+    stateText: $('battleState').textContent,
+    surge: S.surge,
+    battleCanvas: $('battle'),
+    tk1m: w60,
+    tk5mNet: w300.bu - w300.su,
+    bk05: computeDepth(),
+    perp: perpState,
+  };
+});
+
 // ---------- 语言切换 ----------
 document.querySelectorAll('[data-lang]').forEach(b => b.onclick = (e) => { e.stopPropagation(); setLang(b.dataset.lang); });
 onLang(() => {
-  renderChips(); renderTrades(); statusText(); updateMusicInd(); refresh(); if (!sPop.hidden) renderSearch();
+  renderChips(); renderTrades(); statusText(); updateMusicInd(); refresh(); renderPerp(); if (!sPop.hidden) renderSearch();
   if (intro.isConnected) introMsg.textContent = T(...introKey);
   document.title = T('title', S.last ? `$${fmtP(S.last)} ${M.base}` : M.base);
   requestAnimationFrame(fitHeader);
@@ -768,3 +892,28 @@ document.title = T('title');
 setCoin(wantCoin, { first: true });
 // 喊单评论区 + 弹幕（独立模块，后端不可用时只影响评论区）
 try { initChat({ getCoin: () => M.base, battleHost: document.querySelector('.battle-card') }); } catch (e) { console.warn('chat init failed', e); }
+
+// ---------- PWA Service Worker 注册与更新提示 ----------
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+  const swToast = $('swToast'), swReload = $('swReload'), swClose = $('swClose');
+  let swRefreshing = false;
+  const showSwPrompt = (worker) => {
+    if (!swToast || !worker) return;
+    swToast.hidden = false;
+    swReload.onclick = () => { swToast.hidden = true; worker.postMessage('SKIP_WAITING'); };
+  };
+  if (swClose) swClose.onclick = () => { swToast.hidden = true; };
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!swRefreshing) { swRefreshing = true; location.reload(); }
+  });
+  navigator.serviceWorker.register('./sw.js').then((reg) => {
+    if (reg.waiting) showSwPrompt(reg.waiting);
+    reg.addEventListener('updatefound', () => {
+      const nw = reg.installing;
+      if (!nw) return;
+      nw.addEventListener('statechange', () => {
+        if (nw.state === 'installed' && navigator.serviceWorker.controller) showSwPrompt(nw);
+      });
+    });
+  }).catch(() => {});
+}

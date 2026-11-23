@@ -172,6 +172,7 @@ select option{background:#0f172a}
 .banner.blue{color:#dbeafe;text-shadow:0 0 18px #3b82f6,0 0 40px #2563eb,0 4px 0 #1e3a8a}
 .banner.red{color:#fee2e2;text-shadow:0 0 18px #ef4444,0 0 40px #dc2626,0 4px 0 #7f1d1d}
 .banner.gold{color:#fef3c7;text-shadow:0 0 18px #f59e0b,0 0 40px #d97706,0 4px 0 #78350f}
+.banner.liq{color:#f3e8ff;text-shadow:0 0 18px #a855f7,0 0 40px #7e22ce,0 4px 0 #3b0764}
 .banner.victory{font-size:clamp(30px,6vw,68px)}
 
 h2{margin:0 0 12px;font-size:16px;font-weight:800;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -358,7 +359,7 @@ mark.sp-hl{background:none;color:#fde68a}
 .topbar.stack4 .coin-tabs .ct-ch{display:none}
 
 /* ---------- 喊单评论区 + 弹幕 ---------- */
-.layout{grid-template-areas:"price price price" "battle battle battle" "chat chat chat" "taker book trades"}
+.layout{grid-template-areas:"price price price" "battle battle battle" "perp perp perp" "chat chat chat" "taker book trades"}
 .layout .card:nth-child(6){animation-delay:.2s}
 .chat-card{grid-area:chat;display:flex;flex-direction:column;min-height:0;height:420px}
 .chat-card h2{margin-bottom:10px}
@@ -406,15 +407,15 @@ mark.sp-hl{background:none;color:#fde68a}
 .dm-tag{font-family:var(--mono);font-size:.68em;padding:0 5px;margin-right:5px;border-radius:5px;background:rgba(255,255,255,.18);vertical-align:2px;text-shadow:none;color:#fff}
 @media (min-width:1201px){
   .layout{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.15fr) clamp(300px,24vw,380px);
-    grid-template-areas:"price price price chat" "battle battle battle chat" "taker book trades chat"}
+    grid-template-areas:"price price price chat" "battle battle battle chat" "perp perp perp chat" "taker book trades chat"}
   .chat-card{height:auto}
   .chat-card h2 small{display:none}
 }
 @media (max-width:1000px){
-  .layout{grid-template-areas:"price price" "battle battle" "chat chat" "taker book" "trades trades"}
+  .layout{grid-template-areas:"price price" "battle battle" "perp perp" "chat chat" "taker book" "trades trades"}
 }
 @media (max-width:640px){
-  .layout{grid-template-areas:"price" "battle" "chat" "taker" "book" "trades"}
+  .layout{grid-template-areas:"price" "battle" "perp" "chat" "taker" "book" "trades"}
   .chat-card{height:400px}
   .dm{font-size:14.5px}
   .chat-nick{width:96px}
@@ -427,3 +428,51 @@ mark.sp-hl{background:none;color:#fde68a}
 /* 窄屏：图例最多两行、不超出画布；横屏矮屏：弹幕开关移到右上（右下被悬浮配乐按钮挡住），并让开红方军旗 */
 @media (max-width:640px){.legend{left:8px;right:8px;transform:none;margin:0 auto;width:max-content;max-width:calc(100% - 16px);box-sizing:border-box;white-space:normal;text-align:center;line-height:1.35}}
 @media (max-height:500px) and (orientation:landscape){.battle-card .dm-tog{bottom:auto;top:52px;right:52px;font-size:10.5px;padding:3px 7px}}
+
+/* ---------- 永续合约视角 ---------- */
+.perp-card{grid-area:perp;padding:12px 16px}
+.perp-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.perp-title{display:flex;align-items:center;gap:8px;font-size:14.5px;font-weight:800}
+.perp-src{font-family:var(--mono);font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.06);color:var(--mut);border:1px solid var(--line)}
+.perp-src.on{color:#fde68a;border-color:rgba(251,191,36,.35);background:rgba(251,191,36,.1)}
+.perp-last{font-size:11.5px;font-weight:700;font-family:var(--mono);padding:2px 9px;border-radius:999px;opacity:0;transition:opacity .3s}
+.perp-last.show{opacity:1}
+.perp-last.long{color:#fca5a5;background:rgba(239,68,68,.16);border:1px solid rgba(239,68,68,.35)}
+.perp-last.short{color:#93c5fd;background:rgba(59,130,246,.16);border:1px solid rgba(59,130,246,.35)}
+.perp-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.perp-item{display:flex;flex-direction:column;gap:3px;padding:9px 12px;border-radius:12px;background:rgba(255,255,255,.03);border:1px solid var(--line);min-width:0}
+.perp-k{font-size:11px;color:var(--mut)}
+.perp-v{font-family:var(--mono);font-size:15px;font-weight:800;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.perp-v.pos{color:var(--blue2)}.perp-v.neg{color:var(--red2)}
+.perp-s{font-family:var(--mono);font-size:11px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.perp-bar{display:flex;height:6px;border-radius:999px;overflow:hidden;background:#0b1020;margin-top:4px;gap:2px}
+.perp-bar i{display:block;height:100%;transition:width .5s ease}
+.perp-bar .pb-b{width:50%;background:linear-gradient(90deg,#1d4ed8,#60a5fa)}
+.perp-bar .pb-r{width:50%;background:linear-gradient(90deg,#f87171,#b91c1c)}
+.perp-card.na .perp-v{color:var(--mut)}
+@media (max-width:900px){.perp-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:640px){.perp-card{padding:12px}.perp-v{font-size:13.5px}}
+
+/* ---------- 一键战报分享弹窗 ---------- */
+.share-btn{display:inline-flex;align-items:center;gap:5px;padding:0 10px;font-weight:700}
+@media (max-width:640px){.share-btn{padding:0 8px}.share-btn .sh-txt{display:none}}
+.share-modal{position:fixed;inset:0;z-index:120;display:grid;place-items:center;padding:16px;background:rgba(4,6,14,.78);backdrop-filter:blur(8px)}
+.share-modal[hidden]{display:none}
+.share-box{width:min(760px,96vw);background:rgba(12,17,34,.98);border:1px solid var(--line2);border-radius:18px;padding:16px;box-shadow:0 28px 80px rgba(0,0,0,.7);display:flex;flex-direction:column;gap:12px}
+.share-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.share-top h3{margin:0;font-size:16px;font-weight:800}
+.share-preview{border-radius:12px;overflow:hidden;border:1px solid var(--line);background:#060914;aspect-ratio:16/9;display:grid;place-items:center}
+.share-preview img{width:100%;height:100%;object-fit:contain;display:block}
+.share-meta{font-size:12px;color:#86efac;min-height:1.2em}
+.share-meta.bad{color:#fca5a5}
+.share-actions{display:flex;gap:10px;flex-wrap:wrap}
+.sa-btn{flex:1;min-width:120px;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:10px 14px;border-radius:11px;border:1px solid var(--line2);background:rgba(255,255,255,.07);color:var(--txt);font:700 13px var(--sans);cursor:pointer;transition:transform .15s,background .15s}
+.sa-btn:hover{background:rgba(255,255,255,.13);transform:translateY(-1px)}
+.sa-btn.pri{background:linear-gradient(135deg,#2563eb,#3b82f6);border-color:transparent;color:#fff}
+.sa-btn.x{background:#000;color:#fff}
+
+/* ---------- PWA 更新提示 ---------- */
+.sw-toast{position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:110;display:flex;align-items:center;gap:10px;padding:9px 12px 9px 14px;border-radius:999px;background:rgba(12,17,34,.96);border:1px solid rgba(251,191,36,.45);box-shadow:0 12px 36px rgba(0,0,0,.6);font-size:12.5px;color:var(--txt);white-space:nowrap}
+.sw-toast[hidden]{display:none}
+.sw-reload{border:0;border-radius:999px;padding:5px 12px;background:#fbbf24;color:#111;font:800 12px var(--sans);cursor:pointer}
+.sw-close{border:0;background:none;color:var(--mut);font-size:16px;line-height:1;cursor:pointer;padding:0 4px}

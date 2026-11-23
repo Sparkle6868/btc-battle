@@ -1,6 +1,6 @@
 // 行情数据层：Binance / OKX / Coinbase 公共 WebSocket（无需 API Key），自动故障切换
 // 输出统一事件：trade / ticker / book / status
-import { fetchJson, binFetch, binCanSpend, binBlockedFor } from './net.js?v=1a8cff89';
+import { fetchJson, binFetch, binCanSpend, binBlockedFor } from './net.js?v=f5b2a28a';
 
 
 export const SOURCES = {
@@ -44,13 +44,13 @@ function connectBinance(h, hostIdx, m) {
   const S = m.binance.toLowerCase();
   const host = BINANCE_HOSTS[hostIdx];
   const book = new OrderBook();
-  let closed = false, ws, buffer = [], lastU = null, syncing = false, resyncTimer;
+  let closed = false, ws, buffer = [], lastU = null, syncing = false, resyncTimer, stale = false;
   const url = `${host.ws}/stream?streams=${S}@aggTrade/${S}@depth@100ms/${S}@miniTicker`;
   ws = new WebSocket(url);
 
   async function snapshot() {
     if (syncing || closed) return;
-    syncing = true;
+    syncing = true; stale = false;
     try {
       // 5000 档（权重 250）覆盖更深；额度紧张时降到 1000 档（权重 50），再不够就稍后重试
       const lim = binCanSpend(250) ? 5000 : binCanSpend(50) ? 1000 : 0;
@@ -102,9 +102,18 @@ function connectBinance(h, hostIdx, m) {
   };
   ws.onerror = () => {};
   ws.onclose = () => { if (!closed) h.onClose(); };
-  // 定期刷新快照，补齐快照范围外的价位
-  resyncTimer = setInterval(() => { if (!syncing && ws.readyState === 1) { lastU = null; snapshot(); } }, 120000);
-  return { close() { closed = true; clearInterval(resyncTimer); try { ws.close(); } catch {} }, book };
+  // 定期刷新快照，补齐快照范围外的价位（后台标签页暂停，回前台时补刷）
+  const onVis = () => {
+    if (!document.hidden && stale && !syncing && !closed && ws.readyState === 1) { stale = false; lastU = null; snapshot(); }
+  };
+  document.addEventListener('visibilitychange', onVis);
+  resyncTimer = setInterval(() => {
+    if (!syncing && ws.readyState === 1) {
+      if (document.hidden) stale = true;
+      else { lastU = null; snapshot(); }
+    }
+  }, 120000);
+  return { close() { closed = true; clearInterval(resyncTimer); document.removeEventListener('visibilitychange', onVis); try { ws.close(); } catch {} }, book };
 }
 
 // ---------------- OKX ----------------

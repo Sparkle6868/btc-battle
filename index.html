@@ -8,7 +8,7 @@
 <meta name="author" content="大橙子 (Big Orange) @0xVeryBigOrange" />
 <meta name="theme-color" content="#070a14" />
 <meta http-equiv="Cache-Control" content="no-cache" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self' https://api.binance.com https://data-api.binance.vision wss://stream.binance.com wss://stream.binance.com:9443 wss://data-stream.binance.vision https://www.okx.com wss://ws.okx.com https://api.exchange.coinbase.com wss://ws-feed.exchange.coinbase.com https://gtdvykkdvpzsnhlqlgun.supabase.co wss://gtdvykkdvpzsnhlqlgun.supabase.co; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'self'; base-uri 'self'; form-action 'none'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self' https://api.binance.com https://data-api.binance.vision https://fapi.binance.com wss://stream.binance.com wss://stream.binance.com:9443 wss://data-stream.binance.vision wss://fstream.binance.com https://www.okx.com wss://ws.okx.com https://api.exchange.coinbase.com wss://ws-feed.exchange.coinbase.com https://gtdvykkdvpzsnhlqlgun.supabase.co wss://gtdvykkdvpzsnhlqlgun.supabase.co; object-src 'none'; frame-src 'none'; worker-src 'self'; manifest-src 'self'; base-uri 'self'; form-action 'none'" />
 <meta name="referrer" content="strict-origin-when-cross-origin" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="Crypto War · 多空战场" />
@@ -41,7 +41,7 @@
 <!-- 网页字体异步加载，不阻塞渲染；加载失败时使用系统字体 -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Ma+Shan+Zheng&family=JetBrains+Mono:wght@500;700;800&display=swap" media="print" id="gfonts" />
 <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Ma+Shan+Zheng&family=JetBrains+Mono:wght@500;700;800&display=swap" /></noscript>
-<link rel="stylesheet" href="style.css?v=1a8cff89" />
+<link rel="stylesheet" href="style.css?v=f5b2a28a" />
 </head>
 <body>
 <!-- 开场 -->
@@ -101,6 +101,7 @@
       <option value="coinbase">Coinbase</option>
     </select>
     <button class="music-ind" id="musicInd" type="button" aria-live="polite" data-i18n="music">♪ 配乐</button>
+    <button class="icon-btn share-btn" id="shareBtn" type="button" title="生成并分享战报截图" aria-label="战报" data-i18n-title="shareBtnT" data-i18n-aria="shareBtn">📸 <span class="sh-txt" data-i18n="shareBtn">战报</span></button>
     <div class="audio-wrap">
       <button id="audioBtn" class="icon-btn" title="战争配乐 / 音效" aria-label="战争配乐与音效" data-i18n-title="audioTitle" data-i18n-aria="audioAria">🔇</button>
       <div class="audio-pop" id="audioPop" hidden>
@@ -154,6 +155,35 @@
     <div class="hud-r"><span data-i18n="hudR">卖方 · 红军</span><span class="flag red" data-i18n="flagS">空</span></div>
     <div class="legend" id="legend"></div>
     <button type="button" class="dm-tog" data-dm-tog data-i18n-title="dmT" aria-pressed="true">💬 弹幕 开</button>
+  </section>
+
+  <section class="card perp-card" id="perpCard">
+    <div class="perp-head">
+      <div class="perp-title"><span class="h-ico">📊</span> <span data-i18n="perpTitle">永续合约</span> <span class="perp-src" id="perpSrc">--</span></div>
+      <div class="perp-last" id="perpLastLiq"></div>
+    </div>
+    <div class="perp-grid">
+      <div class="perp-item">
+        <span class="perp-k" data-i18n="perpFund">资金费率</span>
+        <b class="perp-v" id="perpFund">--</b>
+        <small class="perp-s" id="perpNext">--</small>
+      </div>
+      <div class="perp-item">
+        <span class="perp-k" data-i18n="perpOi">未平仓量 (OI)</span>
+        <b class="perp-v" id="perpOi">--</b>
+        <small class="perp-s" id="perpOiQty">--</small>
+      </div>
+      <div class="perp-item">
+        <span class="perp-k" data-i18n="perpLs">多空人数比</span>
+        <b class="perp-v" id="perpLs">--</b>
+        <div class="perp-bar"><i class="pb-b" id="perpLsB"></i><i class="pb-r" id="perpLsR"></i></div>
+      </div>
+      <div class="perp-item">
+        <span class="perp-k" data-i18n="perpLiq">5 分钟爆仓</span>
+        <b class="perp-v" id="perpLiq">--</b>
+        <small class="perp-s" id="perpLiqSub">--</small>
+      </div>
+    </div>
   </section>
 
   <section class="card taker-card">
@@ -243,6 +273,26 @@
   </div>
   <p class="disclaimer" data-i18n="disclaimer">数据来自 Binance / OKX / Coinbase 公共行情（无需 API Key），仅供娱乐参考，不构成投资建议 · 蓝 = 多 / 买方，红 = 空 / 卖方</p>
 </footer>
-<script type="module" src="js/app.js?v=1a8cff89"></script>
+<div class="share-modal" id="shareModal" role="dialog" aria-modal="true" aria-labelledby="shareModalTitle" hidden>
+  <div class="share-box">
+    <div class="share-top">
+      <h3 id="shareModalTitle" data-i18n="shareTitle">生成实时战场战报</h3>
+      <button type="button" class="sp-close" id="shareClose" data-i18n="shareClose">关闭</button>
+    </div>
+    <div class="share-preview"><img id="shareImg" alt="Crypto War Battle Report" /></div>
+    <div class="share-meta" id="shareMeta">正在生成高清战报…</div>
+    <div class="share-actions">
+      <a class="sa-btn pri" id="shareDl" download="crypto-war-report.png" data-i18n="shareDl">下载 PNG</a>
+      <button type="button" class="sa-btn" id="shareCopy" data-i18n="shareCopy">复制图片</button>
+      <a class="sa-btn x" id="shareX" target="_blank" rel="noopener" data-i18n="shareX">分享到 X</a>
+    </div>
+  </div>
+</div>
+<div class="sw-toast" id="swToast" role="status" hidden>
+  <span data-i18n="swNew">✨ 发现新版本，刷新即可更新</span>
+  <button type="button" class="sw-reload" id="swReload" data-i18n="swReload">立即刷新</button>
+  <button type="button" class="sw-close" id="swClose" aria-label="Close">×</button>
+</div>
+<script type="module" src="js/app.js?v=f5b2a28a"></script>
 </body>
 </html>

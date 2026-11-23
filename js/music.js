@@ -49,8 +49,8 @@ export class WarMusic {
     this.verb = c.createConvolver(); this.verb.buffer = this._impulse(3.2, 2.6);
     this.verbRet = c.createGain(); this.verbRet.gain.value = 0.55;
     this.verb.connect(this.verbRet).connect(this.mix);
-    this.verbSendM = c.createGain(); this.verbSendM.gain.value = 1; this.verbSendM.connect(this.verb);
-    this.verbSendS = c.createGain(); this.verbSendS.gain.value = 1; this.verbSendS.connect(this.verb);
+    this.verbSendM = c.createGain(); this.verbSendM.gain.value = 0; this.verbSendM.connect(this.verb);
+    this.verbSendS = c.createGain(); this.verbSendS.gain.value = 0; this.verbSendS.connect(this.verb);
     // 白噪声
     const n = c.sampleRate * 2, nb = c.createBuffer(1, n, c.sampleRate), d = nb.getChannelData(0);
     for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
@@ -187,16 +187,17 @@ export class WarMusic {
   // ---------- 特殊事件 ----------
   whale(t = this.ctx.currentTime + 0.02, side = 'blue') { // 巨鲸空袭爆炸
     const c = this.ctx;
-    const o = c.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(90, t); o.frequency.exponentialRampToValueAtTime(24, t + 1.6);
-    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(1.0, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.8);
-    o.connect(g); o.start(t); o.stop(t + 1.9);
-    const nz = this._noiseSrc(t, 1.6), lp = c.createBiquadFilter(); lp.type = 'lowpass';
-    lp.frequency.setValueAtTime(2400, t); lp.frequency.exponentialRampToValueAtTime(180, t + 1.4);
-    const ng = c.createGain(); ng.gain.setValueAtTime(0.7, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
-    nz.connect(lp).connect(ng);
-    const bus = this.sfxOn ? 'sfx' : 'music';
-    this._out(g, bus, 0.4); this._out(ng, bus, 0.6);
-    this.taiko(t, 1, bus, 1.2); this.cymbal(t + 0.02, 3, 0.8, false, bus);
+    if (this.sfxOn) {
+      const o = c.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(90, t); o.frequency.exponentialRampToValueAtTime(24, t + 1.6);
+      const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(1.0, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.8);
+      o.connect(g); o.start(t); o.stop(t + 1.9);
+      const nz = this._noiseSrc(t, 1.6), lp = c.createBiquadFilter(); lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(2400, t); lp.frequency.exponentialRampToValueAtTime(180, t + 1.4);
+      const ng = c.createGain(); ng.gain.setValueAtTime(0.7, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+      nz.connect(lp).connect(ng);
+      this._out(g, 'sfx', 0.4); this._out(ng, 'sfx', 0.6);
+      this.taiko(t, 1, 'sfx', 1.2); this.cymbal(t + 0.02, 3, 0.8, false, 'sfx');
+    }
     if (this.musicOn) this.brass(t + 0.05, side === 'blue' ? 50 : 45, 0.9, 1, side === 'blue' ? 57 : 38);
   }
   impact(usd, side, t = this.ctx.currentTime + 0.01) { // 大单炮弹音效
@@ -285,9 +286,14 @@ export class WarMusic {
   setMusic(on) {
     this.musicOn = on;
     this.music.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, on ? 0.3 : 0.15);
+    this.verbSendM.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, on ? 0.3 : 0.15);
     if (on) { this.step = 0; this.nextT = this.ctx.currentTime + 0.1; }
   }
-  setSfx(on) { this.sfxOn = on; this.sfx.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.05); }
+  setSfx(on) {
+    this.sfxOn = on;
+    this.sfx.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.05);
+    this.verbSendS.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.05);
+  }
 }
 
 /** 浏览器端控制器：AudioContext 生命周期、iOS 解锁、后台暂停 */

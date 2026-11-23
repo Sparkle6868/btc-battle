@@ -1,4 +1,5 @@
-import { fetchJson, binFetch } from './net.js?v=1a8cff89';
+import { fetchJson, binFetch } from './net.js?v=f5b2a28a';
+import { lsGet, lsSet, lsDel } from './storage.js?v=f5b2a28a';
 // 币种宇宙：Binance（USDT 现货）为主，OKX（USDT 现货）、Coinbase（USD）补充；本地缓存 + 24h 行情排序
 const UKEY = 'cw_univ_v2', UTTL = 12 * 3600e3;
 const BIN_REST = ['https://api.binance.com', 'https://data-api.binance.vision'];
@@ -30,10 +31,10 @@ let univPromise = null;
 export function loadUniverse(force = false) {
   if (univPromise && !force) return univPromise;
   univPromise = (async () => {
-    try { localStorage.removeItem('cw_univ_v1'); } catch {} // 旧版缓存（含股票代币）
+    lsDel('cw_univ_v1'); // 旧版缓存（含股票代币）
     try {
-      const c = JSON.parse(localStorage.getItem(UKEY) || 'null');
-      if (!force && c && Date.now() - c.t < UTTL && c.d && c.d.length > 50) { ingest(c.d); refreshUniverse(); return universe; }
+      const c = JSON.parse(lsGet(UKEY) || 'null');
+      if (!force && c && Date.now() - c.t < UTTL && c.d && c.d.length > 50) { ingest(c.d); return universe; }
     } catch {}
     await refreshUniverse(); return universe;
   })();
@@ -71,7 +72,7 @@ async function refreshUniverse() {
   ingest(d);
   // 有交易所请求失败（临时故障 / 限流）时只缓存 30 分钟，避免半残的列表（比如缺了 Binance）被用上 12 小时
   const partial = [b, o, cb].some(x => x.status !== 'fulfilled');
-  try { localStorage.setItem(UKEY, JSON.stringify({ t: partial ? Date.now() - UTTL + 30 * 60e3 : Date.now(), d })); } catch {}
+  lsSet(UKEY, JSON.stringify({ t: partial ? Date.now() - UTTL + 30 * 60e3 : Date.now(), d }));
 }
 function ingest(d) {
   for (const [base, bs, os, cs, dp, qdp] of d) {
@@ -165,8 +166,8 @@ export function thresholdsFor(id, qv) {
 
 // 最近 / 收藏
 const RK = 'cw_recent', FK = 'cw_fav';
-const rd = (k) => { try { return JSON.parse(localStorage.getItem(k) || '[]'); } catch { return []; } };
+const rd = (k) => { try { return JSON.parse(lsGet(k, '[]') || '[]'); } catch { return []; } };
 export const recents = () => rd(RK);
-export function pushRecent(id) { const r = [id, ...rd(RK).filter(x => x !== id)].slice(0, 8); localStorage.setItem(RK, JSON.stringify(r)); }
+export function pushRecent(id) { const r = [id, ...rd(RK).filter(x => x !== id)].slice(0, 8); lsSet(RK, JSON.stringify(r)); }
 export const favorites = () => rd(FK);
-export function toggleFav(id) { const f = rd(FK); const i = f.indexOf(id); if (i >= 0) f.splice(i, 1); else f.unshift(id); localStorage.setItem(FK, JSON.stringify(f.slice(0, 30))); return i < 0; }
+export function toggleFav(id) { const f = rd(FK); const i = f.indexOf(id); if (i >= 0) f.splice(i, 1); else f.unshift(id); lsSet(FK, JSON.stringify(f.slice(0, 30))); return i < 0; }

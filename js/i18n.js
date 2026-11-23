@@ -1,10 +1,11 @@
 // 中英文切换：?lang=zh|en > localStorage > 浏览器语言（zh* → 中文，其它 → 英文）
+import { lsGet, lsSet } from './storage.js?v=f5b2a28a';
 const KEY = 'cw_lang';
 export const escH = (x) => String(x).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function detect() {
   const q = new URLSearchParams(location.search).get('lang');
   if (q && /^(zh|en)/i.test(q)) return q.toLowerCase().startsWith('zh') ? 'zh' : 'en';
-  const s = localStorage.getItem(KEY); if (s === 'zh' || s === 'en') return s;
+  const s = lsGet(KEY); if (s === 'zh' || s === 'en') return s;
   const nav = (navigator.languages && navigator.languages[0]) || navigator.language || 'en';
   return /^zh/i.test(nav) ? 'zh' : 'en';
 }
@@ -13,7 +14,7 @@ const subs = [];
 export function onLang(fn) { subs.push(fn); }
 export function setLang(l) {
   if (l !== 'zh' && l !== 'en') return;
-  lang = l; localStorage.setItem(KEY, l);
+  lang = l; lsSet(KEY, l);
   const u = new URL(location.href); u.searchParams.set('lang', l); history.replaceState(null, '', u);
   applyI18n(); subs.forEach(f => f(l));
 }
@@ -93,6 +94,20 @@ const D = {
     chatRate: '喊太快了，歇 3 秒再来', chatRateG: '战场太热闹了，稍等几秒再喊', chatErr: '发送失败，请重试', chatEmptyBody: '先写点内容',
     dmOn: '弹幕 开', dmOff: '弹幕 关', dmT: '弹幕开关', chatLive: '实时', chatOff: '重连中', chatMe: '我', chatSideBull: '多', chatSideBear: '空', chatNickPre: '韭菜',
     chatNote: '匿名发言，内容为网友观点，不代表本站，不构成投资建议',
+    perpTitle: '永续合约', perpNone: '暂无永续合约', perpFund: '资金费率', perpNext: (t) => `结算 ${t}`,
+    perpOi: '未平仓量 (OI)', perpLs: '多空人数比', perpLiq: '5 分钟爆仓',
+    perpLiqPair: (l, s) => `多 ${l} · 空 ${s}`, perpLiqLive: '实时爆仓流', perpLiqWait: '等待强平事件…', perpLiqNa: '当前源暂无爆仓流',
+    perpLastL: (u) => `💥 多单爆仓 ${u}`, perpLastS: (u) => `💥 空单爆仓 ${u}`,
+    liqTagL: '永续多爆', liqTagS: '永续空爆',
+    liqBanner: (isLong, u) => `⚡ 永续${isLong ? '多头' : '空头'}大额爆仓<small>强平 ${u} · 永续合约联动</small>`,
+    shareBtn: '战报', shareBtnT: '生成并分享战报截图', shareTitle: '生成实时战场战报',
+    shareMeta: '正在生成高清战报…', shareReady: '1200×675 高清战报已就绪',
+    shareDl: '下载 PNG', shareCopy: '复制图片', shareCopied: '已复制到剪贴板',
+    shareCopyFail: '当前浏览器不支持复制图片，请直接下载', shareX: '分享到 X', shareClose: '关闭',
+    shareTweet: (pair, px, bp, st) => `⚔️ ${pair} ${px} | 多空战力 ${bp}%:${100 - bp}%（${st}）— Crypto War 实时多空战场`,
+    repSub: '实时多空战场战报', repTk1m: '1 分钟吃单', repBk05: '±0.5% 盘口',
+    repPerp: '永续费率 / OI', repLiq: '5 分钟爆仓', repDelta5m: '5 分钟净主动买', repHiLo: '24h 高 / 低',
+    swNew: '✨ 发现新版本，刷新即可更新', swReload: '立即刷新',
   },
   en: {
     title: (p) => `${p ? p + ' · ' : ''}Crypto War · Bulls vs Bears | Live crypto battle`,
@@ -145,6 +160,20 @@ const D = {
     chatRate: 'Too fast — wait 3 seconds', chatRateG: 'The battlefield is busy, try again in a few seconds', chatErr: 'Send failed, please retry', chatEmptyBody: 'Write something first',
     dmOn: 'Danmaku on', dmOff: 'Danmaku off', dmT: 'Toggle flying comments', chatLive: 'Live', chatOff: 'Reconnecting', chatMe: 'me', chatSideBull: 'Long', chatSideBear: 'Short', chatNickPre: 'Degen',
     chatNote: 'Anonymous posts are visitors\' opinions, not financial advice',
+    perpTitle: 'Perp Futures', perpNone: 'Spot only', perpFund: 'Funding Rate', perpNext: (t) => `Next ${t}`,
+    perpOi: 'Open Interest', perpLs: 'Long/Short Ratio', perpLiq: '5m Liquidations',
+    perpLiqPair: (l, s) => `L ${l} · S ${s}`, perpLiqLive: 'Live liq feed', perpLiqWait: 'Watching liquidations…', perpLiqNa: 'No liq feed on source',
+    perpLastL: (u) => `💥 Long liq ${u}`, perpLastS: (u) => `💥 Short liq ${u}`,
+    liqTagL: 'LONG LIQ', liqTagS: 'SHORT LIQ',
+    liqBanner: (isLong, u) => `⚡ Perp ${isLong ? 'Long' : 'Short'} Liquidation<small>Forced ${u} · Futures FX</small>`,
+    shareBtn: 'Report', shareBtnT: 'Generate & share battle report', shareTitle: 'Share Battle Report',
+    shareMeta: 'Rendering snapshot…', shareReady: '1200×675 PNG ready',
+    shareDl: 'Download PNG', shareCopy: 'Copy Image', shareCopied: 'Copied to clipboard',
+    shareCopyFail: 'Image copy unsupported — download instead', shareX: 'Post on X', shareClose: 'Close',
+    shareTweet: (pair, px, bp, st) => `⚔️ ${pair} ${px} | Bulls vs Bears ${bp}%:${100 - bp}% (${st}) — Crypto War`,
+    repSub: 'LIVE BATTLE REPORT', repTk1m: '1m Taker Flow', repBk05: '±0.5% Order Book',
+    repPerp: 'Funding / OI', repLiq: '5m Liquidations', repDelta5m: '5m Net Taker Buy', repHiLo: '24h High / Low',
+    swNew: '✨ New version ready', swReload: 'Reload',
   },
 };
 export function t(key, ...a) {
