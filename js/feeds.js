@@ -1,6 +1,6 @@
 // 行情数据层：Binance / OKX / Coinbase 公共 WebSocket（无需 API Key），自动故障切换
 // 输出统一事件：trade / ticker / book / status
-import { fetchJson, binFetch, binCanSpend, binBlockedFor } from './net.js?v=965311c0';
+import { fetchJson, binFetch, binCanSpend, binBlockedFor } from './net.js?v=d48474ac';
 
 
 export const SOURCES = {
@@ -8,8 +8,7 @@ export const SOURCES = {
   okx: { name: 'OKX', quote: 'USDT' },
   coinbase: { name: 'Coinbase', quote: 'USD' },
 };
-export const COINS = { btc: 'BTC', eth: 'ETH' };
-// m = 市场描述 { id, base, binance:'SOLUSDT'|null, okx:'SOL-USDT'|null, coinbase:'SOL-USD'|null }
+export const BTC_MARKET = { id: 'btc', base: 'BTC', binance: 'BTCUSDT', okx: 'BTC-USDT', coinbase: 'BTC-USD', dp: 2, qdp: 4 };
 export const AUTO_ORDER = ['binance', 'okx', 'coinbase'];
 
 const BINANCE_HOSTS = [
@@ -332,33 +331,6 @@ export async function fetchBinanceAggTrades(m, hostIdx, beforeId, sinceMs, after
     }
   } catch (e) { if (!out.length) return null; }
   return sinceMs ? out.filter(x => x.T >= sinceMs) : out;
-}
-
-// 双币迷你行情（REST 轮询，独立于主连接）：返回 { btc:{last,chg}, eth:{last,chg} }
-export async function fetchMiniTickers() {
-  const tries = [
-    async () => {
-      for (const host of ['https://api.binance.com', 'https://data-api.binance.vision']) {
-        try {
-          const j = await binFetch(`${host}/api/v3/ticker/24hr?symbols=${encodeURIComponent('["BTCUSDT","ETHUSDT"]')}&type=MINI`, 4, 5000);
-          const o = {};
-          for (const t of j) o[t.symbol === 'BTCUSDT' ? 'btc' : 'eth'] = { last: +t.lastPrice, chg: (+t.lastPrice / +t.openPrice - 1) * 100 };
-          return o;
-        } catch {}
-      }
-      throw new Error('binance');
-    },
-    async () => {
-      const o = {};
-      for (const c of ['btc', 'eth']) {
-        const j = await fetchJson(`https://www.okx.com/api/v5/market/ticker?instId=${c.toUpperCase()}-USDT`, 5000);
-        const t = j.data[0]; o[c] = { last: +t.last, chg: (+t.last / +t.open24h - 1) * 100 };
-      }
-      return o;
-    },
-  ];
-  for (const f of tries) { try { return await f(); } catch {} }
-  return null;
 }
 
 // OKX 最近成交（REST，每页 100 条，按 tradeId 往回翻页）：用于 OKX 数据源开页时回填 10秒/1分钟/5分钟 窗口和大单

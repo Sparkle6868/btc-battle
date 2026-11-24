@@ -1,5 +1,5 @@
 // One-click Battle Report PNG generator (1200x675 Canvas 2D) & share modal controller
-import { t as T, fmtUsd } from './i18n.js?v=965311c0';
+import { t as T, fmtUsd } from './i18n.js?v=d48474ac';
 
 const SANS = '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif';
 const MONO = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
@@ -70,11 +70,46 @@ export async function renderReportBlob(data) {
   ctx.textAlign = 'left';
   ctx.fillStyle = '#e6ebff';
   ctx.font = `900 28px ${SANS}`;
-  ctx.fillText('⚔️ CRYPTO WAR', 36, 48);
+  ctx.fillText('⚔️ BTC WAR ROOM', 36, 48);
 
   ctx.fillStyle = '#fde68a';
   ctx.font = `700 15px ${SANS}`;
   ctx.fillText(`${T('repSub')} · ${data.pair}`, 38, 74);
+
+  // Header center: Coinbase Premium & Fear/Greed pills
+  const pills = [];
+  if (data.cbPremUsd != null && isFinite(data.cbPremUsd)) {
+    const sign = data.cbPremUsd >= 0 ? '+' : '-';
+    pills.push({
+      txt: `${T('repCbPrem')} ${sign}$${Math.abs(data.cbPremUsd).toFixed(0)}`,
+      col: data.cbPremUsd >= 0 ? '#93c5fd' : '#fca5a5',
+      bg: data.cbPremUsd >= 0 ? 'rgba(59,130,246,0.18)' : 'rgba(239,68,68,0.18)',
+      bd: data.cbPremUsd >= 0 ? 'rgba(96,165,250,0.4)' : 'rgba(248,113,113,0.4)',
+    });
+  }
+  if (data.fng && isFinite(data.fng.value)) {
+    pills.push({
+      txt: `${T('repFng')} ${data.fng.value} · ${T(data.fng.labelKey)}`,
+      col: '#fde68a',
+      bg: 'rgba(251,191,36,0.14)',
+      bd: 'rgba(251,191,36,0.35)',
+    });
+  }
+  if (pills.length) {
+    ctx.font = `700 13px ${SANS}`;
+    let px = 460;
+    for (const p of pills) {
+      const pw = Math.ceil(ctx.measureText(p.txt).width) + 22;
+      ctx.fillStyle = p.bg;
+      ctx.strokeStyle = p.bd;
+      ctx.lineWidth = 1;
+      roundRect(ctx, px, 26, pw, 28, 999); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = p.col;
+      ctx.textAlign = 'left';
+      ctx.fillText(p.txt, px + 11, 45);
+      px += pw + 10;
+    }
+  }
 
   // Header right: price, change, timestamp
   ctx.textAlign = 'right';
@@ -170,7 +205,7 @@ export async function renderReportBlob(data) {
 
   // Footer
   ctx.textAlign = 'left'; ctx.fillStyle = '#64748b'; ctx.font = `600 13px ${SANS}`;
-  ctx.fillText('Crypto War · Binance / OKX / Coinbase Real-Time Market Battle', 36, H - 22);
+  ctx.fillText('BTC War Room · Binance / OKX / Coinbase Real-Time Command Center', 36, H - 22);
   ctx.textAlign = 'right';
   ctx.fillText(location.host + location.pathname, W - 36, H - 22);
 
@@ -186,7 +221,6 @@ export function initShare(getSnapshot) {
   const meta = document.getElementById('shareMeta');
   const dl = document.getElementById('shareDl');
   const copy = document.getElementById('shareCopy');
-  const xBtn = document.getElementById('shareX');
   const closeBtn = document.getElementById('shareClose');
   if (!btn || !modal) return;
 
@@ -225,9 +259,7 @@ export function initShare(getSnapshot) {
       const pad = (n) => String(n).padStart(2, '0');
       const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
       dl.href = curUrl;
-      dl.download = `crypto-war-${snap.coin}-${stamp}.png`;
-      const tweet = T('shareTweet', snap.pair, snap.priceStr, snap.bluePow, snap.stateText);
-      xBtn.href = `https://x.com/intent/tweet?text=${encodeURIComponent(tweet)}&url=${encodeURIComponent(location.href)}`;
+      dl.download = `btc-war-room-${stamp}.png`;
       meta.textContent = T('shareReady');
     } catch (e) {
       meta.textContent = e.message || 'Render failed';

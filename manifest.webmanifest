@@ -1,7 +1,7 @@
 {
-  "name": "Crypto War · 多空战场",
-  "short_name": "Crypto War",
-  "description": "900+ 币种实时多空对决：蓝军(多) vs 红军(空)。Live crypto bulls vs bears battle.",
+  "name": "BTC War Room · 比特币多空指挥室",
+  "short_name": "BTC War Room",
+  "description": "BTC 专属实时多空作战指挥室：蓝军(多) vs 红军(空) + 三所溢价 + K线 + 爆仓战报。Live Bitcoin bulls vs bears war room.",
   "id": "/btc-battle/",
   "start_url": "./",
   "scope": "./",

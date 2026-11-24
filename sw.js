@@ -1,26 +1,26 @@
-// Crypto War PWA Service Worker: caches app shell only (never exchange APIs or WebSockets)
-const CACHE = 'cw-shell-965311c0';
+// BTC War Room PWA Service Worker: caches app shell only (never exchange APIs or WebSockets)
+const CACHE = 'cw-shell-d48474ac';
 const SHELL = [
   './',
   './index.html',
-  './style.css?v=965311c0',
+  './style.css?v=d48474ac',
   './manifest.webmanifest',
   './favicon.svg',
   './favicon.png',
   './icon-192.png',
   './icon-512.png',
-  './js/app.js?v=965311c0',
-  './js/battle.js?v=965311c0',
-  './js/chat.js?v=965311c0',
-  './js/feeds.js?v=965311c0',
-  './js/futures.js?v=965311c0',
-  './js/i18n.js?v=965311c0',
-  './js/markets.js?v=965311c0',
-  './js/music.js?v=965311c0',
-  './js/net.js?v=965311c0',
-  './js/share.js?v=965311c0',
-  './js/storage.js?v=965311c0',
-  './js/units.js?v=965311c0',
+  './js/app.js?v=d48474ac',
+  './js/battle.js?v=d48474ac',
+  './js/chart.js?v=d48474ac',
+  './js/feeds.js?v=d48474ac',
+  './js/futures.js?v=d48474ac',
+  './js/i18n.js?v=d48474ac',
+  './js/intel.js?v=d48474ac',
+  './js/music.js?v=d48474ac',
+  './js/net.js?v=d48474ac',
+  './js/share.js?v=d48474ac',
+  './js/storage.js?v=d48474ac',
+  './js/units.js?v=d48474ac',
 ];
 
 self.addEventListener('install', (e) => {
