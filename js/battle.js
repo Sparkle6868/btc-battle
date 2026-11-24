@@ -1,7 +1,7 @@
 // 战场动画：Canvas 2D，蓝军（多）在左，红军（空）在右
 // 一期暗黑奇幻升级：数据天象与符文护盾 / 天基裁决光柱与顿帧 / 前线对波漩涡与总攻齐射 / 大单连击计数
-import { t as tr, fmtUsd } from './i18n.js?v=6dd8875c';
-import { makeUnitSprites, drawStandard, Fortress, UNIT } from './units.js?v=6dd8875c';
+import { t as tr, fmtUsd } from './i18n.js?v=fdac0e84';
+import { makeUnitSprites, drawStandard, Fortress, UNIT } from './units.js?v=fdac0e84';
 const TAU = Math.PI * 2;
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -66,6 +66,13 @@ export class Battle {
   constructor(canvas) {
     this.cv = canvas; this.ctx = canvas.getContext('2d');
     this.front = 0.5; this.frontTarget = 0.5; this.surge = null; this.surgeT = 0;
+    this.momentumS = 0; this.frontU = 0; this.frontTargetU = 0;
+    this.onBreach = null; this.onStepChange = null;
+    this.def = {
+      anchor: 0, anchorType: 'daily', price: 0, pct: 0,
+      stepMode: 'auto', step: 1, initialized: false,
+      lines: this._makeDefenseLines(),
+    };
     this.soldiers = []; this.bullets = []; this.shells = [];
     this.strikes = []; this.fissures = []; this.parts = []; this.smoke = [];
     this.rings = []; this.texts = []; this.scorch = []; this.streaks = []; this.embers = [];
@@ -126,6 +133,8 @@ export class Battle {
     this.N = Math.round(clamp(this.W / 16, 22, 70));
     this.forts.blue.build(this.W, this.H, dpr, this.baseL, this.H * 0.66, this.baseL);
     this.forts.red.build(this.W, this.H, dpr, this.baseR, this.H * 0.66, this.W - this.baseR);
+    const shieldPad = Math.max(this.baseL + 58 * this.forts.blue.k, this.W * 0.12);
+    this.defHalfSpan = Math.max(this.W * 0.26, this.W * 0.5 - Math.min(shieldPad, this.W * 0.21));
     this._bg = this._renderBg();
     const strip = (c0, c1) => {
       const c = document.createElement('canvas'); c.width = 128; c.height = 1; const x = c.getContext('2d');
@@ -142,8 +151,16 @@ export class Battle {
     }
   }
   scaleAt(y) { return 0.55 + 0.75 * clamp((y - this.horizon) / (this.H - this.horizon), 0, 1.2); }
-  frontX(y = 0) {
-    const f = this.W * clamp(0.5 + (this.front - 0.5) * 1.5, 0.15, 0.85);
+  defenseX(u, y = this.H * 0.72, bowDir = 0) {
+    const p = clamp((y - this.horizon) / Math.max(1, this.H - this.horizon), 0, 1);
+    const persp = 0.85 + 0.22 * p;
+    const bow = bowDir ? Math.sin(p * Math.PI) * 5.5 * bowDir : 0;
+    return this.W * 0.5 + u * (this.defHalfSpan || this.W * 0.35) * persp + bow;
+  }
+  frontX(y = this.H * 0.72) {
+    const f = this.def && this.def.anchor > 0
+      ? this.defenseX(this.frontU, y, 0)
+      : this.W * clamp(0.5 + (this.front - 0.5) * 1.5, 0.15, 0.85);
     return f + Math.sin(y * 0.045 + this.t * 2.2) * 5 + Math.sin(y * 0.11 - this.t * 3.1) * 3;
   }
 
@@ -359,6 +376,233 @@ export class Battle {
     }
   }
 
+  _makeDefenseLines() {
+    const m = new Map();
+    for (const lvl of [-3, -2, -1, 1, 2, 3]) {
+      m.set(lvl, {
+        lvl,
+        owner: lvl < 0 ? 'blue' : 'red',
+        state: 'intact',
+        wallUsd: 0,
+        wallStr: 0,
+        wallTarget: 0,
+        covered: false,
+        hit: 0,
+        siege: 0,
+        breakT: 0,
+        rebuildT: 0,
+        lastEventAt: -99,
+      });
+    }
+    return m;
+  }
+
+  _activeWallLine(side) {
+    const order = side === 'red' ? [1, 2, 3] : [-1, -2, -3];
+    for (const lvl of order) {
+      const ln = this.def.lines.get(lvl);
+      if (ln && ln.state === 'intact') return ln;
+    }
+    return null;
+  }
+
+  _nearestIntactBehind(side, y, fx) {
+    const order = side === 'blue' ? [-1, -2, -3] : [1, 2, 3];
+    const bowDir = side === 'blue' ? 1 : -1;
+    for (const lvl of order) {
+      const ln = this.def.lines.get(lvl);
+      if (!ln || ln.state !== 'intact') continue;
+      const wx = this.defenseX(lvl * 0.25, y, bowDir);
+      if ((side === 'blue' && wx < fx - 18) || (side === 'red' && wx > fx + 18)) return wx;
+    }
+    return null;
+  }
+
+  setMomentum(s) {
+    this.momentumS = clamp(+s || 0, -1, 1);
+  }
+
+  resetDefense() {
+    this.def.anchor = 0;
+    this.def.anchorType = 'daily';
+    this.def.price = 0;
+    this.def.pct = 0;
+    this.def.initialized = false;
+    this.frontU = 0;
+    this.frontTargetU = 0;
+    for (const [, ln] of this.def.lines) {
+      ln.state = 'intact';
+      ln.wallUsd = 0;
+      ln.wallStr = 0;
+      ln.wallTarget = 0;
+      ln.covered = false;
+      ln.hit = 0;
+      ln.siege = 0;
+      ln.breakT = 0;
+      ln.rebuildT = 0;
+      ln.lastEventAt = -99;
+    }
+  }
+
+  setDefenseState({ anchor, anchorType = 'daily', price, stepMode, wallMap } = {}) {
+    if (!(anchor > 0) || !isFinite(anchor) || !(price > 0) || !isFinite(price)) return;
+    const pct = (price / anchor - 1) * 100;
+    const mode = stepMode || this.def.stepMode || 'auto';
+    const anchorChanged = !(this.def.anchor > 0) || anchorType !== this.def.anchorType || Math.abs(anchor - this.def.anchor) / this.def.anchor > 0.0005;
+    const modeChanged = mode !== this.def.stepMode;
+    let silentSync = !this.def.initialized || anchorChanged || modeChanged;
+
+    const absPct = Math.abs(pct);
+    let nextStep = this.def.step || 1;
+    if (mode === 'auto') {
+      if (silentSync) {
+        nextStep = absPct >= 7 ? 3 : absPct >= 3.4 ? 2 : 1;
+      } else {
+        if (nextStep === 1 && absPct >= 3.4) nextStep = 2;
+        else if (nextStep === 2 && absPct <= 2.6) nextStep = 1;
+        else if (nextStep === 2 && absPct >= 7.0) nextStep = 3;
+        else if (nextStep === 3 && absPct <= 5.6) nextStep = 2;
+      }
+    } else {
+      nextStep = clamp(+mode || 1, 0.25, 5);
+    }
+
+    const stepChanged = nextStep !== this.def.step;
+    if (stepChanged) silentSync = true;
+
+    const wasInit = this.def.initialized;
+    this.def.anchor = anchor;
+    this.def.anchorType = anchorType;
+    this.def.price = price;
+    this.def.pct = pct;
+    this.def.step = nextStep;
+    this.def.stepMode = mode;
+
+    if (wallMap) {
+      for (const [lvl, ln] of this.def.lines) {
+        const w = wallMap instanceof Map ? wallMap.get(lvl) : wallMap[lvl];
+        if (!w) continue;
+        ln.covered = !!w.covered;
+        ln.wallUsd = w.usd > 0 && isFinite(w.usd) ? w.usd : 0;
+        ln.wallTarget = ln.covered && ln.wallUsd > 0
+          ? clamp((Math.log10(ln.wallUsd + 1) - 5.0) / 2.2, 0.12, 1)
+          : 0;
+      }
+    }
+
+    if (silentSync) {
+      for (const [lvl, ln] of this.def.lines) {
+        const linePct = lvl * nextStep;
+        ln.state = lvl > 0 ? (pct >= linePct ? 'captured' : 'intact') : (pct <= linePct ? 'captured' : 'intact');
+        ln.hit = 0;
+        ln.breakT = 0;
+        ln.rebuildT = 0;
+        ln.siege = 0;
+      }
+      if (!wasInit || stepChanged) {
+        const rightLn = this._activeWallLine('red');
+        const leftLn = this._activeWallLine('blue');
+        const rightWall = rightLn ? rightLn.lvl * 0.25 : 0.94;
+        const leftWall = leftLn ? leftLn.lvl * 0.25 : -0.94;
+        const macroU = clamp(pct / (nextStep * 4), -0.94, 0.94);
+        const initU = clamp(macroU, leftWall + 0.02, rightWall - 0.02);
+        this.frontU = this.frontTargetU = initU;
+        this.front = this.frontTarget = clamp(0.5 + initU * 0.5, 0.04, 0.96);
+      }
+      this.def.initialized = true;
+    } else {
+      const hyst = Math.max(0.03, nextStep * 0.04);
+      const events = [];
+      for (const lvl of [1, 2, 3, -1, -2, -3]) {
+        const ln = this.def.lines.get(lvl);
+        if (!ln) continue;
+        const linePct = lvl * nextStep;
+        if (this.t - ln.lastEventAt < 15) continue;
+        if (lvl > 0) {
+          if (ln.state === 'intact' && pct >= linePct + hyst * 0.35) {
+            ln.state = 'captured'; ln.breakT = 0.95; ln.hit = 1; ln.lastEventAt = this.t;
+            events.push({ ln, attacker: 'blue', recaptured: false });
+          } else if (ln.state === 'captured' && pct <= linePct - hyst * 1.1) {
+            ln.state = 'intact'; ln.rebuildT = 0.85; ln.hit = 0.7; ln.lastEventAt = this.t;
+            events.push({ ln, attacker: 'red', recaptured: true });
+          }
+        } else {
+          if (ln.state === 'intact' && pct <= linePct - hyst * 0.35) {
+            ln.state = 'captured'; ln.breakT = 0.95; ln.hit = 1; ln.lastEventAt = this.t;
+            events.push({ ln, attacker: 'red', recaptured: false });
+          } else if (ln.state === 'captured' && pct >= linePct + hyst * 1.1) {
+            ln.state = 'intact'; ln.rebuildT = 0.85; ln.hit = 0.7; ln.lastEventAt = this.t;
+            events.push({ ln, attacker: 'blue', recaptured: true });
+          }
+        }
+      }
+      for (let i = 0; i < events.length; i++) {
+        const ev = events[i];
+        this._triggerLineEvent(ev.ln, ev.attacker, ev.recaptured, i === events.length - 1);
+      }
+    }
+
+    if (stepChanged && this.onStepChange) this.onStepChange(nextStep);
+  }
+
+  _triggerLineEvent(line, attackerSide, recaptured, notify = true) {
+    if (!this.W) return;
+    const u = line.lvl * 0.25;
+    const bowDir = line.owner === 'blue' ? 1 : -1;
+    const midY = (this.laneTop + this.laneBot) * 0.5;
+    const mx = this.defenseX(u, midY, bowDir);
+    const col = colOf(attackerSide);
+    const defenderSide = attackerSide === 'blue' ? 'red' : 'blue';
+    const nSparks = Math.round((recaptured ? 14 : 26) * this.Q.pk);
+    for (let i = 0; i < nSparks; i++) {
+      const py = rand(this.laneTop, this.laneBot);
+      const px = this.defenseX(u, py, bowDir);
+      const a = rand(-1.3, 1.3) + (attackerSide === 'blue' ? 0 : Math.PI);
+      const sp = rand(70, recaptured ? 170 : 240);
+      this.parts.push({
+        type: 'spark', x: px, y: py,
+        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 35,
+        life: rand(0.45, 0.95), max: 0.95,
+        col: Math.random() < 0.35 ? '#fde68a' : col.light, w: rand(1.5, 2.8),
+      });
+    }
+    for (let i = 0; i < 2; i++) {
+      const ry = lerp(this.laneTop + 20, this.laneBot - 20, i === 0 ? 0.35 : 0.72);
+      const rx = this.defenseX(u, ry, bowDir);
+      this.rings.push({ x: rx, y: ry, r: 6, max: recaptured ? 46 : 72, life: 0.55, t: 0, col: col.glow });
+    }
+    this.parts.push({ type: 'glow', spr: attackerSide, x: mx, y: midY, vx: 0, vy: 0, life: 0.45, max: 0.45, size: 110, add: true, grow: 1.2 });
+    if (!recaptured) {
+      for (const s of this.soldiers) {
+        if (s.dead || s.side !== defenderSide) continue;
+        const sx = this.defenseX(u, s.y, bowDir);
+        if (Math.abs(s.x - sx) < 48) {
+          s.dead = true; s.dieT = 0;
+          s.vx = (attackerSide === 'blue' ? 1 : -1) * rand(40, 110);
+          s.vy = -rand(40, 100);
+        }
+      }
+    }
+    this.shake = Math.max(this.shake, recaptured ? 3.5 : 7.5);
+    this.flash = Math.max(this.flash, recaptured ? 0.08 : 0.16);
+    this.flashCol = attackerSide === 'blue' ? '147,197,253' : '252,165,165';
+
+    const pctVal = +(line.lvl * this.def.step).toFixed(1);
+    const pctStr = (pctVal > 0 ? '+' : '') + pctVal + '%';
+    const tag = tr(recaptured ? 'defRecapTag' : 'defBreachTag', pctStr);
+    this.texts.push({
+      x: mx, y: this.laneTop + 14, vx: 0,
+      txt: tag, side: attackerSide,
+      col: recaptured ? '#fde68a' : col.light,
+      lvl: 2, life: 2.1, max: 2.1,
+    });
+
+    if (notify && this.onBreach) {
+      const linePrice = this.def.anchor * (1 + pctVal / 100);
+      this.onBreach({ side: attackerSide, lvl: line.lvl, pct: pctVal, price: linePrice, recaptured });
+    }
+  }
+
   setActivity(blue, red) { this.activity.blue = clamp(blue, 0, 2); this.activity.red = clamp(red, 0, 2); }
   setThresholds(th) { Object.assign(this.th, th); }
 
@@ -370,6 +614,7 @@ export class Battle {
     this.hitstop = 0; this.zoom = 1; this.zoomX = 0.5; this.zoomY = 0.65; this.volleyT = 0;
     this.combo.blue = { count: 0, usd: 0, lastAt: -99, pop: 0 };
     this.combo.red = { count: 0, usd: 0, lastAt: -99, pop: 0 };
+    this.resetDefense();
     for (const f of Object.values(this.forts)) { f.dmg = 0; f.glow = 0.6; }
   }
 
@@ -387,7 +632,7 @@ export class Battle {
   }
 
   // ---------- 对外接口 ----------
-  setFront(v) { this.frontTarget = clamp(v, 0.04, 0.96); }
+  setFront(v) { if (!this.def.initialized) this.frontTarget = clamp(v, 0.04, 0.96); }
   setSurge(side) { this.surge = side; }
   fire(side, usd, qty) {
     if (document.hidden) return;
@@ -463,7 +708,7 @@ export class Battle {
     const fx = this.frontX(y);
     const d = Math.pow(Math.random(), 1.7);
     const x = atBase ? base + (side === 'blue' ? rand(-10, 20) : rand(-20, 10)) : lerp(fx, base, d * 0.8 + 0.1);
-    this.soldiers.push({ side, x, y, d, phase: rand(0, TAU), speed: rand(28, 48), cool: rand(0.3, 2.5), dead: false, dieT: 0, hit: 0, rot: 0, banner: Math.random() < 0.09 });
+    this.soldiers.push({ side, x, y, d, phase: rand(0, TAU), speed: rand(28, 48), cool: rand(0.3, 2.5), dead: false, dieT: 0, hit: 0, rot: 0, banner: Math.random() < 0.09, garrison: Math.random() < 0.25 });
   }
 
   _killNear(side, x, y, r) {
@@ -581,6 +826,13 @@ export class Battle {
       this.shields[enemy].hit = 1;
       if (opts.whale) this.shields[enemy].breakT = Math.max(this.shields[enemy].breakT, 0.55);
     }
+    if (this.def.anchor > 0) {
+      const targetWall = this._activeWallLine(enemy);
+      if (targetWall) {
+        const wx = this.defenseX(targetWall.lvl * 0.25, clamp(y, this.laneTop, this.laneBot), enemy === 'blue' ? 1 : -1);
+        if (Math.abs(x - wx) < 28) targetWall.hit = Math.min(1, targetWall.hit + clamp(0.35 + power * 0.12, 0.35, 1));
+      }
+    }
   }
   _ember(init) {
     return { x: rand(0, this.W || 800), y: init ? rand(0, this.H || 400) : (this.H || 400) + 5, vy: rand(-12, -30), vx: rand(-6, 6), s: rand(0.6, 1.8), a: rand(0.2, 0.7), ph: rand(0, TAU) };
@@ -679,7 +931,39 @@ export class Battle {
       dt = rawDt * 0.12;
     }
     this.t += dt;
-    this.front = lerp(this.front, this.frontTarget, 1 - Math.exp(-dt * 1.4));
+    let rightLine = null, leftLine = null;
+    if (this.def.anchor > 0 && this.def.initialized) {
+      const maxPct = this.def.step * 4;
+      const macroU = clamp(this.def.pct / maxPct, -0.94, 0.94);
+      const microU = Math.tanh(this.momentumS * 1.5) * 0.085;
+      rightLine = this._activeWallLine('red');
+      leftLine = this._activeWallLine('blue');
+      const rightWall = rightLine ? rightLine.lvl * 0.25 : 0.94;
+      const leftWall = leftLine ? leftLine.lvl * 0.25 : -0.94;
+      const targetU = clamp(macroU + microU, leftWall + 0.02, rightWall - 0.02);
+      this.frontTargetU = targetU;
+      this.frontU = clamp(lerp(this.frontU, targetU, 1 - Math.exp(-dt * 2.2)), leftWall + 0.015, rightWall - 0.015);
+      this.frontTarget = clamp(0.5 + targetU * 0.5, 0.04, 0.96);
+      this.front = clamp(0.5 + this.frontU * 0.5, 0.04, 0.96);
+
+      for (const [, ln] of this.def.lines) {
+        ln.wallStr = lerp(ln.wallStr, ln.wallTarget, 1 - Math.exp(-dt * 2.5));
+        ln.hit = Math.max(0, ln.hit - dt * 2.4);
+        ln.breakT = Math.max(0, ln.breakT - dt);
+        ln.rebuildT = Math.max(0, ln.rebuildT - dt);
+        let siegeT = 0;
+        if (ln === rightLine) {
+          const dist = rightWall - this.frontU;
+          if (dist < 0.18) siegeT = clamp(1 - dist / 0.18, 0, 1) * (this.momentumS > 0 ? 1.15 : 0.75);
+        } else if (ln === leftLine) {
+          const dist = this.frontU - leftWall;
+          if (dist < 0.18) siegeT = clamp(1 - dist / 0.18, 0, 1) * (this.momentumS < 0 ? 1.15 : 0.75);
+        }
+        ln.siege = lerp(ln.siege, clamp(siegeT, 0, 1), 1 - Math.exp(-dt * 4));
+      }
+    } else {
+      this.front = lerp(this.front, this.frontTarget, 1 - Math.exp(-dt * 1.4));
+    }
     this.intensity *= Math.exp(-dt * 0.8);
     this.surgeT = this.surge ? Math.min(this.surgeT + dt * 2, 1) : Math.max(this.surgeT - dt * 1.5, 0);
 
@@ -736,6 +1020,10 @@ export class Battle {
       const surging = this.surge === s.side;
       const depth = surging ? s.d * 0.35 : s.d;
       let tx = fx - dir * (12 + depth * Math.abs(fx - base) * 0.82);
+      if (!surging && s.garrison && this.def.anchor > 0) {
+        const friendlyWall = this._nearestIntactBehind(s.side, s.y, fx);
+        if (friendlyWall != null) tx = friendlyWall - dir * (10 + s.d * 22);
+      }
       if (surging) tx += dir * 10 * Math.sin(this.t * 3 + s.phase);
       const behind = (s.x - fx) * dir > 8;
       const dx = tx - s.x, sp = s.speed * (surging ? 2.2 : 1) * (behind ? 2.8 : Math.abs(dx) > 80 ? 1.6 : 1);
@@ -754,6 +1042,18 @@ export class Battle {
     // 子弹
     for (const b of this.bullets) {
       b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+      if (this.def.anchor > 0 && b.life > 0) {
+        const wall = b.side === 'blue' ? rightLine : leftLine;
+        if (wall) {
+          const wy = clamp(b.y, this.laneTop, this.laneBot);
+          const wx = this.defenseX(wall.lvl * 0.25, wy, wall.owner === 'blue' ? 1 : -1);
+          if ((b.side === 'blue' && b.x >= wx - 4) || (b.side === 'red' && b.x <= wx + 4)) {
+            b.x = wx; b.life = 0;
+            wall.hit = Math.min(1, wall.hit + 0.22);
+            for (let i = 0; i < 2; i++) this.parts.push({ type: 'spark', x: b.x, y: b.y, vx: rand(-60, 60), vy: rand(-90, -15), life: rand(0.14, 0.28), max: 0.28, col: colOf(wall.owner).light, w: 1.3 });
+          }
+        }
+      }
       if (b.life <= 0) {
         for (let i = 0; i < 4; i++) this.parts.push({ type: 'spark', x: b.x, y: b.y, vx: rand(-80, 80), vy: rand(-110, -20), life: rand(0.15, 0.35), max: 0.35, col: colOf(b.side).light, w: 1.2 });
         if (Math.random() < 0.06) this._killNear(b.side === 'blue' ? 'red' : 'blue', b.x, b.y + 10, 9);
@@ -898,6 +1198,7 @@ export class Battle {
       ctx.beginPath(); ctx.ellipse(s.x, s.y + 2, s.r, s.r * 0.32, 0, 0, TAU); ctx.fill();
     }
     this._drawFissures();
+    this._drawDefenseLinesGround();
 
     const rm = !!(RM && RM.matches);
     this._drawPremiumBeacon();
@@ -911,6 +1212,7 @@ export class Battle {
     // 士兵按 y 排序（远小近大）
     this.soldiers.sort((a, b) => a.y - b.y);
     for (const s of this.soldiers) this._drawSoldier(s);
+    this._drawDefenseLinesOverlay();
 
     // 烟雾
     for (const s of this.smoke) {
@@ -1245,6 +1547,350 @@ export class Battle {
       ctx.fillText(txt, bx + pw / 2, ph / 2 + 0.5);
       ctx.restore();
     }
+  }
+
+  _roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h);
+  }
+
+  _lineCurve(u, bowDir, y0, y1, steps = 10) {
+    const pts = [];
+    for (let i = 0; i <= steps; i++) {
+      const y = lerp(y0, y1, i / steps);
+      pts.push([this.defenseX(u, y, bowDir), y]);
+    }
+    return pts;
+  }
+
+  _drawDefenseLinesGround() {
+    if (!(this.def.anchor > 0)) return;
+    const { ctx } = this;
+    const y0 = this.horizon + 2, y1 = this.H - 2;
+    const activeRed = this._activeWallLine('red');
+    const activeBlue = this._activeWallLine('blue');
+
+    ctx.save();
+    // 0% 中轴基准线（楚河汉界）
+    const cx = this.W * 0.5;
+    ctx.strokeStyle = 'rgba(4,6,14,0.5)';
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(cx, y0); ctx.lineTo(cx, y1); ctx.stroke();
+    ctx.strokeStyle = 'rgba(253,230,138,0.28)';
+    ctx.lineWidth = 1.4;
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath(); ctx.moveTo(cx, y0); ctx.lineTo(cx, y1); ctx.stroke();
+    ctx.setLineDash([]);
+
+    for (const lvl of [-3, -2, -1, 1, 2, 3]) {
+      const ln = this.def.lines.get(lvl);
+      if (!ln) continue;
+      const bowDir = ln.owner === 'blue' ? 1 : -1;
+      const pts = this._lineCurve(lvl * 0.25, bowDir, y0, y1, 10);
+      const isContested = (activeRed && lvl === activeRed.lvl) || (activeBlue && lvl === activeBlue.lvl);
+      if (ln.state === 'intact') {
+        const c = colOf(ln.owner);
+        ctx.strokeStyle = 'rgba(4,6,14,0.68)';
+        ctx.lineWidth = 4.5 + ln.wallStr * 4.5;
+        ctx.beginPath();
+        pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.stroke();
+
+        ctx.strokeStyle = `rgba(${c.glow.join(',')},${isContested ? 0.44 : 0.18})`;
+        ctx.lineWidth = 1.4 + ln.wallStr * 1.1;
+        ctx.beginPath();
+        pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.stroke();
+
+        // 地面符文石桩（3 枚按透视缩放）
+        for (const p of [0.24, 0.56, 0.86]) {
+          const py = lerp(this.laneTop, this.laneBot, p);
+          const px = this.defenseX(lvl * 0.25, py, bowDir);
+          const sc = this.scaleAt(py);
+          ctx.fillStyle = '#0c101d';
+          ctx.beginPath();
+          ctx.ellipse(px, py + 1.5 * sc, (4 + ln.wallStr * 2) * sc, 2 * sc, 0, 0, TAU);
+          ctx.fill();
+          ctx.fillStyle = ln.wallStr > 0.25 ? '#fde68a' : c.light;
+          ctx.globalAlpha = isContested ? 0.85 : 0.45;
+          ctx.beginPath();
+          ctx.arc(px, py - 2 * sc, (1.7 + ln.wallStr * 0.8) * sc, 0, TAU);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+      } else {
+        const att = ln.owner === 'blue' ? 'red' : 'blue';
+        const ac = colOf(att);
+        ctx.setLineDash([7, 7]);
+        ctx.strokeStyle = 'rgba(8,10,18,0.58)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.stroke();
+        ctx.strokeStyle = `rgba(${ac.glow.join(',')},0.22)`;
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    ctx.restore();
+  }
+
+  _drawDefenseLinesOverlay() {
+    if (!(this.def.anchor > 0)) return;
+    const { ctx, t } = this;
+    const rm = !!(RM && RM.matches);
+    const activeRed = this._activeWallLine('red');
+    const activeBlue = this._activeWallLine('blue');
+    const targetLvl = this.def.pct >= 0 ? (activeRed ? activeRed.lvl : 3) : (activeBlue ? activeBlue.lvl : -3);
+    const yTop = this.laneTop - 10, yBot = this.laneBot + 8;
+
+    ctx.save();
+    for (const lvl of [-3, -2, -1, 1, 2, 3]) {
+      const ln = this.def.lines.get(lvl);
+      if (!ln) continue;
+      const u = lvl * 0.25;
+      const bowDir = ln.owner === 'blue' ? 1 : -1;
+      const c = colOf(ln.owner);
+
+      if (ln.state === 'intact') {
+        const isContested = (activeRed && lvl === activeRed.lvl) || (activeBlue && lvl === activeBlue.lvl);
+        const pts = this._lineCurve(u, bowDir, yTop, yBot, 10);
+        const rebuildK = ln.rebuildT > 0 ? clamp(1 - ln.rebuildT / 0.85, 0.25, 1) : 1;
+
+        if (!isContested && ln.rebuildT <= 0) {
+          // 纵深预备防线：低矮淡光栏，保持画面通透
+          const alpha = 0.16 + ln.wallStr * 0.14;
+          ctx.strokeStyle = `rgba(${c.glow.join(',')},${alpha})`;
+          ctx.lineWidth = 1.2 + ln.wallStr * 0.8;
+          ctx.beginPath();
+          pts.forEach(([x, y], i) => {
+            const yy = y - 8 * this.scaleAt(y);
+            if (i === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+          });
+          ctx.stroke();
+        } else {
+          // 当前正面交锋防线：完整升起半透明符文护盾墙 + 盘口厚甲加固纹
+          const hBase = 24 * rebuildK;
+          const alpha = clamp(0.28 + ln.siege * 0.44 + ln.wallStr * 0.26 + ln.hit * 0.38, 0.24, 0.95);
+          const pulse = rm ? 1 : (0.88 + 0.12 * Math.sin(t * (3.2 + ln.siege * 6) + lvl));
+
+          // 能量光幕填充
+          const midX = this.defenseX(u, (yTop + yBot) * 0.5, bowDir);
+          const cg = ctx.createLinearGradient(midX - 18, 0, midX + 18, 0);
+          cg.addColorStop(0, `rgba(${c.glow.join(',')},0)`);
+          cg.addColorStop(0.5, `rgba(${c.glow.join(',')},${0.22 * alpha * pulse})`);
+          cg.addColorStop(1, `rgba(${c.glow.join(',')},0)`);
+          ctx.fillStyle = cg;
+          ctx.beginPath();
+          pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+          for (let i = pts.length - 1; i >= 0; i--) {
+            const [x, y] = pts[i];
+            ctx.lineTo(x, y - hBase * this.scaleAt(y));
+          }
+          ctx.closePath();
+          ctx.fill();
+
+          if (this.q < 2) ctx.globalCompositeOperation = 'lighter';
+          // 顶部能量脊线（受击闪白）
+          if (this.q < 2) {
+            ctx.strokeStyle = `rgba(${c.glow.join(',')},${0.22 * alpha * pulse})`;
+            ctx.lineWidth = (5 + ln.wallStr * 4) * rebuildK;
+            ctx.beginPath();
+            pts.forEach(([x, y], i) => {
+              const yy = y - hBase * this.scaleAt(y);
+              if (i === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+            });
+            ctx.stroke();
+          }
+          ctx.strokeStyle = ln.hit > 0.25
+            ? `rgba(255,255,255,${0.88 * alpha})`
+            : `rgba(${c.glow.join(',')},${0.72 * alpha * pulse})`;
+          ctx.lineWidth = (1.5 + ln.wallStr * 1.3) * rebuildK;
+          ctx.beginPath();
+          pts.forEach(([x, y], i) => {
+            const yy = y - hBase * this.scaleAt(y);
+            if (i === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+          });
+          ctx.stroke();
+
+          // 符文菱形节点（真实盘口厚时变为金色加固盾纹）
+          for (const q of [0.18, 0.42, 0.66, 0.88]) {
+            const py = lerp(yTop, yBot, q);
+            const px = this.defenseX(u, py, bowDir);
+            const sc = this.scaleAt(py);
+            const cy = py - hBase * sc * 0.55;
+            const rs = (2.3 + ln.wallStr * 1.8) * sc;
+            ctx.fillStyle = ln.wallStr > 0.25
+              ? `rgba(253,230,138,${0.85 * alpha})`
+              : `rgba(${c.glow.join(',')},${0.75 * alpha})`;
+            ctx.beginPath();
+            ctx.moveTo(px, cy - rs); ctx.lineTo(px + rs * 0.72, cy);
+            ctx.lineTo(px, cy + rs); ctx.lineTo(px - rs * 0.72, cy);
+            ctx.closePath(); ctx.fill();
+          }
+          ctx.globalCompositeOperation = 'source-over';
+        }
+      } else {
+        // 已攻破：瞬间金白裂纹 + 持续插上进攻方占领战旗
+        const att = ln.owner === 'blue' ? 'red' : 'blue';
+        const ac = colOf(att);
+        if (ln.breakT > 0) {
+          const bk = ln.breakT / 0.95;
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.strokeStyle = `rgba(253,230,138,${0.9 * bk})`;
+          ctx.lineWidth = 2.2;
+          ctx.beginPath();
+          for (let i = 0; i <= 6; i++) {
+            const py = lerp(yTop, yBot, i / 6);
+            const px = this.defenseX(u, py, bowDir) + (i % 2 ? 7 : -7) * bk;
+            if (i === 0) ctx.moveTo(px, py - 12); else ctx.lineTo(px, py - 12);
+          }
+          ctx.stroke();
+          ctx.globalCompositeOperation = 'source-over';
+        }
+        const fDir = att === 'blue' ? 1 : -1;
+        for (const q of [0.34, 0.72]) {
+          const py = lerp(this.laneTop, this.laneBot, q);
+          const px = this.defenseX(u, py, bowDir);
+          const sc = this.scaleAt(py);
+          const h = 19 * sc;
+          const wave = rm ? 0 : Math.sin(t * 5.5 + lvl + q * 4) * 1.6 * sc;
+          ctx.strokeStyle = '#cbd5e1';
+          ctx.lineWidth = 1.2 * sc;
+          ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, py - h); ctx.stroke();
+          ctx.fillStyle = ac.main;
+          ctx.beginPath();
+          ctx.moveTo(px, py - h);
+          ctx.lineTo(px + fDir * 10 * sc, py - h + 3.2 * sc + wave);
+          ctx.lineTo(px, py - h + 7 * sc);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = '#fde68a';
+          ctx.lineWidth = 0.6;
+          ctx.stroke();
+        }
+      }
+    }
+
+    // 地平线战术界碑标牌（% + 真实价格刻度）
+    const narrow = this.W < 780;
+    const ultraNarrow = this.W < 480;
+    const badgeY = narrow ? this.horizon + 8 : this.horizon + 15;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    for (const lvl of [-3, -2, -1, 1, 2, 3]) {
+      const ln = this.def.lines.get(lvl);
+      if (!ln) continue;
+      const bowDir = ln.owner === 'blue' ? 1 : -1;
+      const tx = this.defenseX(lvl * 0.25, this.horizon, bowDir);
+      const pctVal = +(lvl * this.def.step).toFixed(1);
+      const pctStr = (pctVal > 0 ? '+' : '') + pctVal + '%';
+      const pxStr = '$' + Math.round(this.def.anchor * (1 + pctVal / 100)).toLocaleString('en-US');
+      const captured = ln.state === 'captured';
+      const att = ln.owner === 'blue' ? 'red' : 'blue';
+      const col = colOf(captured ? att : ln.owner);
+      const isTarget = lvl === targetLvl;
+      const titleTxt = captured && !narrow ? '✓ ' + pctStr : pctStr;
+
+      // 界碑连线到底下战壕
+      ctx.strokeStyle = isTarget ? 'rgba(253,230,138,0.68)' : `rgba(${col.glow.join(',')},0.35)`;
+      ctx.lineWidth = isTarget ? 1.4 : 1;
+      ctx.beginPath();
+      ctx.moveTo(tx, this.horizon + 2);
+      ctx.lineTo(tx, isTarget ? this.laneTop - 3 : badgeY + 5);
+      ctx.stroke();
+
+      if (narrow) {
+        if (isTarget) {
+          // 窄屏/平板：将当前争夺的目标防线价格标牌单独下沉到第 3 层，彻底避开 ±% 刻度行与 0% 基准碑
+          const targetY = clamp(this.horizon + 25, badgeY + 16, this.laneTop - 9);
+          const lbl = `${captured ? '✓ ' : ''}${pctStr} · ${pxStr}`;
+          ctx.font = `800 ${ultraNarrow ? 9 : 10}px "JetBrains Mono", monospace`;
+          const tw = ctx.measureText(lbl).width;
+          const bw = tw + 12, bh = ultraNarrow ? 15 : 17;
+          const bx = clamp(tx - bw / 2, 6, this.W - bw - 6);
+          const by = targetY - bh / 2;
+          ctx.fillStyle = 'rgba(14,18,34,0.92)';
+          ctx.strokeStyle = 'rgba(253,230,138,0.85)';
+          ctx.lineWidth = 1.2;
+          this._roundRect(ctx, bx, by, bw, bh, 5);
+          ctx.fill(); ctx.stroke();
+          ctx.fillStyle = '#fde68a';
+          ctx.fillText(lbl, bx + bw / 2, targetY + 0.5);
+        } else {
+          // 其余 5 条刻度：紧凑 % 文本 + 占领方顶部小星点（不加宽字符串）
+          ctx.font = `800 ${ultraNarrow ? 8.5 : 9.5}px "JetBrains Mono", monospace`;
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = 'rgba(4,6,14,0.92)';
+          ctx.strokeText(pctStr, tx, badgeY);
+          ctx.fillStyle = col.light;
+          ctx.fillText(pctStr, tx, badgeY);
+          if (captured) {
+            ctx.fillStyle = col.light;
+            ctx.beginPath();
+            ctx.arc(tx, badgeY - 6, 1.5, 0, TAU);
+            ctx.fill();
+          }
+        }
+        continue;
+      }
+
+      ctx.font = '800 10.5px "JetBrains Mono", monospace';
+      const w1 = ctx.measureText(titleTxt).width;
+      ctx.font = '600 9.5px "JetBrains Mono", monospace';
+      const w2 = ctx.measureText(pxStr).width;
+      const bw = Math.max(w1, w2) + 14;
+      const bh = 26;
+      const bx = clamp(tx - bw / 2, 6, this.W - bw - 6);
+      const by = badgeY - bh / 2;
+
+      ctx.fillStyle = isTarget ? 'rgba(14,18,34,0.9)' : 'rgba(7,10,20,0.78)';
+      ctx.strokeStyle = isTarget ? 'rgba(253,230,138,0.82)' : `rgba(${col.glow.join(',')},${captured ? 0.55 : 0.38})`;
+      ctx.lineWidth = isTarget ? 1.3 : 1;
+      this._roundRect(ctx, bx, by, bw, bh, 6);
+      ctx.fill(); ctx.stroke();
+
+      ctx.font = '800 10.5px "JetBrains Mono", monospace';
+      ctx.fillStyle = isTarget ? '#fde68a' : col.light;
+      ctx.fillText(titleTxt, bx + bw / 2, by + 8);
+      ctx.font = '600 9.5px "JetBrains Mono", monospace';
+      ctx.fillStyle = 'rgba(230,235,255,0.86)';
+      ctx.fillText(pxStr, bx + bw / 2, by + bh - 6.5);
+    }
+
+    // 0% 基准中轴碑（错层置于地平线上方，避免与 ±1% 标牌碰撞）
+    const cx = this.W * 0.5;
+    const cy = this.horizon - (ultraNarrow ? 15 : 13);
+    const baseTxt = this.W >= 520 ? `0% · ${tr(this.def.anchorType === 'daily' ? 'defBase' : 'defBase24')}` : '0%';
+    const basePx = '$' + Math.round(this.def.anchor).toLocaleString('en-US');
+    ctx.font = `800 ${ultraNarrow ? 9 : 10.5}px "JetBrains Mono", -apple-system, sans-serif`;
+    const bw1 = ctx.measureText(baseTxt).width;
+    ctx.font = `700 ${ultraNarrow ? 8.5 : 10}px "JetBrains Mono", monospace`;
+    const bw2 = ctx.measureText(basePx).width;
+    const cbw = Math.max(bw1, bw2) + (ultraNarrow ? 10 : 14);
+    const cbh = ultraNarrow ? 22 : 27;
+
+    ctx.strokeStyle = 'rgba(253,230,138,0.55)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(cx, cy + cbh / 2); ctx.lineTo(cx, this.horizon + 2); ctx.stroke();
+
+    ctx.fillStyle = 'rgba(16,14,24,0.88)';
+    ctx.strokeStyle = 'rgba(253,230,138,0.65)';
+    ctx.lineWidth = 1.2;
+    this._roundRect(ctx, cx - cbw / 2, cy - cbh / 2, cbw, cbh, 7);
+    ctx.fill(); ctx.stroke();
+
+    ctx.font = `800 ${ultraNarrow ? 9 : 10.5}px "JetBrains Mono", -apple-system, sans-serif`;
+    ctx.fillStyle = '#fde68a';
+    ctx.fillText(baseTxt, cx, cy - (ultraNarrow ? 4 : 5));
+    ctx.font = `700 ${ultraNarrow ? 8.5 : 10}px "JetBrains Mono", monospace`;
+    ctx.fillStyle = '#e6ebff';
+    ctx.fillText(basePx, cx, cy + (ultraNarrow ? 5 : 6));
+    ctx.restore();
   }
 }
 

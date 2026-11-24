@@ -1,12 +1,12 @@
-import { FeedManager, SOURCES, BTC_MARKET, fetchBinance1s, fetchBinanceAggTrades, fetchOkxTrades, fetchCoinbaseTrades } from './feeds.js?v=6dd8875c';
-import { Battle } from './battle.js?v=6dd8875c';
-import { t as T, setLang, onLang, applyI18n, fmtUsd, fmtShort, fmtNum } from './i18n.js?v=6dd8875c';
-import { AudioController } from './music.js?v=6dd8875c';
-import { lsGet, lsSet } from './storage.js?v=6dd8875c';
-import { FuturesFeed } from './futures.js?v=6dd8875c';
-import { KlineChart } from './chart.js?v=6dd8875c';
-import { CrossExchangeFeed, MtfTracker, fetchFearGreed, getTradingSession } from './intel.js?v=6dd8875c';
-import { initShare } from './share.js?v=6dd8875c';
+import { FeedManager, SOURCES, BTC_MARKET, fetchBinance1s, fetchBinanceAggTrades, fetchOkxTrades, fetchCoinbaseTrades } from './feeds.js?v=fdac0e84';
+import { Battle } from './battle.js?v=fdac0e84';
+import { t as T, setLang, onLang, applyI18n, fmtUsd, fmtShort, fmtNum } from './i18n.js?v=fdac0e84';
+import { AudioController } from './music.js?v=fdac0e84';
+import { lsGet, lsSet } from './storage.js?v=fdac0e84';
+import { FuturesFeed } from './futures.js?v=fdac0e84';
+import { KlineChart } from './chart.js?v=fdac0e84';
+import { CrossExchangeFeed, MtfTracker, fetchFearGreed, getTradingSession } from './intel.js?v=fdac0e84';
+import { initShare } from './share.js?v=fdac0e84';
 
 const $ = (id) => document.getElementById(id);
 const pad = (n) => String(n).padStart(2, '0');
@@ -94,6 +94,7 @@ function resetStats() {
   $('price').textContent = '--'; $('chg').textContent = '--'; $('chg').className = 'chg';
   ['hi', 'lo', 'vol'].forEach(id => $(id).textContent = '--');
   S.big = []; S.bigFrom = 0; S.bigLoading = false; S.lastAggId = 0; S.lastTs = 0; pend = null; clearTimeout(pendTimer);
+  battle.resetDefense();
   renderTrades();
 }
 function bucket(sec) {
@@ -412,8 +413,55 @@ srcOpts.forEach((b) => {
     if (next !== sourceMode) setSourceMode(next);
   });
 });
-document.addEventListener('click', (e) => { if (srcPop && !srcPop.hidden && !e.target.closest('#srcWrap')) closeSourcePop(); });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSourcePop(); });
+document.addEventListener('click', (e) => {
+  if (srcPop && !srcPop.hidden && !e.target.closest('#srcWrap')) closeSourcePop();
+  if (defPop && !defPop.hidden && !e.target.closest('#defWrap')) closeDefPop();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSourcePop(); closeDefPop(); } });
+
+// ---------- 多层价格防线间距切换 ----------
+const DEF_KEY = 'cw_def_step';
+const DEF_MODES = ['auto', '0.5', '1', '2'];
+let defStepMode = lsGet(DEF_KEY, 'auto');
+if (!DEF_MODES.includes(defStepMode)) defStepMode = 'auto';
+const defBtn = $('defBtn'), defLbl = $('defLbl'), defPop = $('defPop');
+const defOpts = [...document.querySelectorAll('#defPop button[data-step]')];
+function renderDefUi() {
+  const activeStep = battle.def.step || (defStepMode === 'auto' ? 1 : +defStepMode);
+  if (defLbl) defLbl.textContent = defStepMode === 'auto' ? T('defLblAuto', activeStep) : T('defLblFixed', activeStep);
+  for (const b of defOpts) {
+    const st = b.dataset.step;
+    b.textContent = st === 'auto' ? T('defOptAuto', activeStep) : T('defOptStep', st);
+    const on = st === defStepMode;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-selected', on);
+  }
+}
+function closeDefPop() {
+  if (!defPop || defPop.hidden) return;
+  defPop.hidden = true;
+  if (defBtn) defBtn.setAttribute('aria-expanded', 'false');
+}
+if (defBtn) {
+  defBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = defPop.hidden;
+    defPop.hidden = !open;
+    defBtn.setAttribute('aria-expanded', open);
+  });
+}
+defOpts.forEach((b) => {
+  b.addEventListener('click', () => {
+    const next = b.dataset.step;
+    closeDefPop();
+    if (next !== defStepMode && DEF_MODES.includes(next)) {
+      defStepMode = next;
+      lsSet(DEF_KEY, next);
+      syncDefense(computeDepth());
+      renderDefUi();
+    }
+  });
+});
 window.addEventListener('offline', statusText);
 window.addEventListener('online', () => { if (!lastStatus || lastStatus[0] !== 'live') fm.start(sourceMode, M); });
 document.querySelectorAll('#exBar .ex-item').forEach((b) => {
@@ -463,7 +511,7 @@ setInterval(() => {
 }, 1000);
 
 // ---------- 多周期涨跌矩阵 ----------
-const mtf = new MtfTracker({ onData: () => renderMtf() });
+const mtf = new MtfTracker({ onData: () => { renderMtf(); syncDefense(computeDepth()); } });
 function renderMtf() {
   if (document.hidden) return;
   const res = mtf.compute(S.last);
@@ -652,6 +700,57 @@ function showBanner(html, cls, ms = 2200, force = false) {
   clearTimeout(bannerT); bannerT = setTimeout(() => banner.classList.remove('show'), ms);
 }
 battle.onWhale = (side, usd) => (audio.whale(side), showBanner(T('whale', side === 'blue', fmtUsd(usd)), side, 2600, true));
+battle.onStepChange = () => renderDefUi();
+battle.onBreach = (ev) => {
+  audio.breach(ev.side, ev.recaptured);
+  const pctStr = (ev.pct > 0 ? '+' : '') + ev.pct + '%';
+  const pxStr = '$' + fmtPx(ev.price, 0);
+  showBanner(
+    ev.recaptured
+      ? T('defRecapBanner', ev.side === 'blue', pctStr, pxStr)
+      : T('defBreachBanner', ev.side === 'blue', pctStr, pxStr),
+    ev.side,
+    ev.recaptured ? 2000 : 2500,
+    !ev.recaptured
+  );
+};
+
+function computeDefenseWalls(book, anchor, step) {
+  if (!book || !book.ready || !(anchor > 0) || !(step > 0)) return null;
+  let minB = Infinity, maxA = 0;
+  for (const p of book.bids.keys()) if (p < minB) minB = p;
+  for (const p of book.asks.keys()) if (p > maxA) maxA = p;
+  const walls = new Map();
+  const targets = [-3, -2, -1, 1, 2, 3].map((lvl) => {
+    const px = anchor * (1 + (lvl * step) / 100);
+    const halfBand = px * 0.0018;
+    return { lvl, lo: px - halfBand, hi: px + halfBand, covered: px >= minB && px <= maxA, usd: 0 };
+  });
+  for (const [p, q] of book.bids) {
+    for (const t of targets) {
+      if (t.lvl < 0 && p >= t.lo && p <= t.hi) t.usd += p * q;
+    }
+  }
+  for (const [p, q] of book.asks) {
+    for (const t of targets) {
+      if (t.lvl > 0 && p >= t.lo && p <= t.hi) t.usd += p * q;
+    }
+  }
+  for (const t of targets) walls.set(t.lvl, { usd: t.usd, covered: t.covered });
+  return walls;
+}
+
+function syncDefense(depth = null) {
+  const anchor = mtf.dailyOpen > 0 ? mtf.dailyOpen : S.open24h;
+  if (!(anchor > 0) || !(S.last > 0)) return;
+  const anchorType = mtf.dailyOpen > 0 ? 'daily' : '24h';
+  const absPct = Math.abs(S.last / anchor - 1) * 100;
+  const previewStep = defStepMode === 'auto'
+    ? (battle.def.initialized ? battle.def.step : (absPct >= 7 ? 3 : absPct >= 3.4 ? 2 : 1))
+    : (+defStepMode || 1);
+  const wallMap = depth && S.book ? computeDefenseWalls(S.book, anchor, previewStep) : null;
+  battle.setDefenseState({ anchor, anchorType, price: S.last, stepMode: defStepMode, wallMap });
+}
 
 // ---------- 战力 & 刷新 ----------
 let smoothS = 0, musicI = 0.15, musicBpm = 80, musicMood = 0;
@@ -710,7 +809,9 @@ function refresh() {
     `${T('bLast')} ${S.tickDir > 0 ? '<b class="c-blue">↑</b>' : S.tickDir < 0 ? '<b class="c-red">↓</b>' : '–'}`,
     `${T('bTk')} ${rt(i60)}`, `${T('bBk')} ${rt(ib)}`].map(bi).join(' · ');
   const s = smoothS, blueShare = 0.5 + 0.5 * s;
-  battle.setFront(0.5 + Math.tanh(s * 1.6) * 0.5);
+  battle.setMomentum(s);
+  syncDefense(d);
+  if (!battle.def.initialized) battle.setFront(0.5 + Math.tanh(s * 1.6) * 0.5);
   const bp = Math.round(blueShare * 100);
   tweenNum($('bluePow'), bp); tweenNum($('redPow'), 100 - bp);
   $('pbBlue').style.width = bp + '%'; $('pbRed').style.width = (100 - bp) + '%';
@@ -992,7 +1093,7 @@ initShare(() => {
 document.querySelectorAll('[data-lang]').forEach(b => b.onclick = (e) => { e.stopPropagation(); setLang(b.dataset.lang); });
 onLang(() => {
   renderChips(); renderTrades(); statusText(); updateMusicInd(); refresh();
-  renderPerp(); renderCrossEx(); renderFng(); renderSession(); renderSourceUi(); klineChart.draw();
+  renderPerp(); renderCrossEx(); renderFng(); renderSession(); renderSourceUi(); renderDefUi(); klineChart.draw();
   if (intro.isConnected) introMsg.textContent = T(...introKey);
   document.title = T('title', S.last ? `$${fmtP(S.last)} BTC` : 'BTC');
   requestAnimationFrame(fitHeader);
@@ -1003,6 +1104,7 @@ document.title = T('title');
 renderChips();
 renderTrades();
 renderSourceUi();
+renderDefUi();
 $('pair').textContent = `${M.base}/USDT`;
 syncExActive();
 fm.start(sourceMode, M);

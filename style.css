@@ -172,6 +172,15 @@ a{color:inherit;text-decoration:none}
 #battle{display:block;width:100%;height:100%}
 .hud-l,.hud-r{position:absolute;top:12px;font-weight:800;font-size:13px;display:flex;align-items:center;gap:8px;text-shadow:0 2px 8px #000;pointer-events:none;padding:5px 10px 5px 5px;border-radius:10px;background:rgba(5,8,18,.45);backdrop-filter:blur(4px)}
 .hud-l{left:12px;color:#bfdbfe}.hud-r{right:12px;color:#fecaca;padding:5px 5px 5px 10px}
+.def-wrap{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:20}
+.def-btn{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:10px;background:rgba(5,8,18,.58);backdrop-filter:blur(6px);border:1px solid rgba(251,191,36,.28);color:#fde68a;font:700 12px/1 var(--sans);cursor:pointer;white-space:nowrap;transition:border-color .2s,background .2s,box-shadow .2s}
+.def-btn:hover{border-color:rgba(251,191,36,.55);background:rgba(12,17,34,.78);box-shadow:0 0 14px rgba(251,191,36,.16)}
+.def-ico{font-size:12px;line-height:1}.def-caret{font-size:10px;color:var(--mut);line-height:1}
+.def-pop{position:absolute;left:50%;transform:translateX(-50%);top:calc(100% + 6px);min-width:142px;padding:5px;border-radius:12px;background:rgba(12,17,34,.97);border:1px solid var(--line2);box-shadow:0 18px 40px rgba(0,0,0,.65);display:flex;flex-direction:column;gap:2px;animation:popin .16s ease-out}
+.def-pop[hidden]{display:none}
+.def-pop button{border:0;background:none;color:var(--mut);font:600 12px/1 var(--sans);text-align:left;padding:8px 10px;border-radius:8px;cursor:pointer;white-space:nowrap;transition:background .15s,color .15s}
+.def-pop button:hover{background:rgba(255,255,255,.08);color:var(--txt)}
+.def-pop button.on{background:rgba(251,191,36,.2);color:#fde68a}
 .flag{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:7px;font-weight:900;color:#fff}
 .flag.blue{background:linear-gradient(135deg,#2563eb,#60a5fa);box-shadow:0 0 14px rgba(59,130,246,.8)}
 .flag.red{background:linear-gradient(135deg,#dc2626,#f87171);box-shadow:0 0 14px rgba(239,68,68,.8)}
@@ -402,6 +411,7 @@ canvas.kline{width:100%;height:175px;display:block;border-radius:10px;background
   .battle-card{height:320px;padding:0}
   .legend{left:8px;right:8px;transform:none;margin:0 auto;width:max-content;max-width:calc(100% - 16px);white-space:normal;text-align:center;line-height:1.35;font-size:9.5px}
   .hud-l,.hud-r{font-size:11px}.flag{width:22px;height:22px}
+  .def-btn{font-size:11px;padding:4px 8px;gap:4px}
   .perp-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .perp-ls-item{grid-column:span 2}
   .perp-v{font-size:13.5px}

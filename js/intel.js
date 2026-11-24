@@ -1,6 +1,6 @@
 // BTC 指挥室情报层：跨所三所报价与 Coinbase 溢价、多周期涨跌矩阵、恐慌贪婪指数、全球交易时段
-import { fetchJson, binFetch } from './net.js?v=6dd8875c';
-import { lsGet, lsSet } from './storage.js?v=6dd8875c';
+import { fetchJson, binFetch } from './net.js?v=fdac0e84';
+import { lsGet, lsSet } from './storage.js?v=fdac0e84';
 
 const BIN_HOSTS = ['https://api.binance.com', 'https://data-api.binance.vision'];
 const EX_STALE_MS = 30000;
@@ -198,6 +198,8 @@ export class MtfTracker {
   constructor({ onData } = {}) {
     this.onData = onData || null;
     this.refs = { '5m': 0, '15m': 0, '1h': 0, '4h': 0, '24h': 0, '7d': 0 };
+    this.dailyOpen = 0;
+    this.dailyUtcDay = -1;
     this.pollT = null;
     this.running = false;
     this.lastFetchAt = 0;
@@ -226,13 +228,13 @@ export class MtfTracker {
     for (const host of BIN_HOSTS) {
       try {
         const d = await binFetch(`${host}/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`, 2, 6000);
-        if (Array.isArray(d) && d.length) return d.map((k) => ({ o: +k[1], c: +k[4] }));
+        if (Array.isArray(d) && d.length) return d.map((k) => ({ t: +k[0], o: +k[1], c: +k[4] }));
       } catch (e) { if (e.rate) break; }
     }
     try {
       const j = await fetchJson(`https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=${encodeURIComponent(okxBar)}&limit=${limit}`, 6000);
       const d = j && Array.isArray(j.data) ? j.data : [];
-      if (d.length) return d.slice().reverse().map((k) => ({ o: +k[1], c: +k[4] }));
+      if (d.length) return d.slice().reverse().map((k) => ({ t: +k[0], o: +k[1], c: +k[4] }));
     } catch {}
     return null;
   }
@@ -256,6 +258,27 @@ export class MtfTracker {
       if (n > 24) this.refs['24h'] = k1h[n - 1 - 24].o;
       if (n > 168) this.refs['7d'] = k1h[n - 1 - 168].o;
       else this.refs['7d'] = k1h[0].o;
+    }
+    const utcDayStart = Math.floor(Date.now() / 86400000) * 86400000;
+    const utcDay = Math.floor(utcDayStart / 86400000);
+    const dayBar = k1h && k1h.find((bar) => bar.t === utcDayStart);
+    if (dayBar && dayBar.o > 0) {
+      this.dailyOpen = dayBar.o;
+      this.dailyUtcDay = utcDay;
+    } else if (this.dailyOpen <= 0) {
+      const k1d = await this._fetchKlines('1d', '1Dutc', 1);
+      if (k1d && k1d[0] && k1d[0].o > 0) {
+        this.dailyOpen = k1d[0].o;
+        this.dailyUtcDay = Math.floor(k1d[0].t / 86400000);
+      } else if (k1h) {
+        for (let i = k1h.length - 1; i >= 0; i--) {
+          if (k1h[i].t >= utcDayStart - 86400000 && k1h[i].o > 0) {
+            this.dailyOpen = k1h[i].o;
+            this.dailyUtcDay = utcDay;
+            break;
+          }
+        }
+      }
     }
     if (this.onData) this.onData(this.refs);
   }

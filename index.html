@@ -36,7 +36,7 @@
 <!-- 网页字体异步加载，不阻塞渲染；加载失败时使用系统字体 -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Ma+Shan+Zheng&family=JetBrains+Mono:wght@500;700;800&display=swap" media="print" id="gfonts" />
 <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Ma+Shan+Zheng&family=JetBrains+Mono:wght@500;700;800&display=swap" /></noscript>
-<link rel="stylesheet" href="style.css?v=6dd8875c" />
+<link rel="stylesheet" href="style.css?v=fdac0e84" />
 </head>
 <body>
 <!-- 开场 -->
@@ -138,6 +138,17 @@
     <div class="banner" id="banner"></div>
     <div class="hud-l"><span class="flag blue" data-i18n="flagL">多</span><span data-i18n="hudL">蓝军 · 买方</span></div>
     <div class="hud-r"><span data-i18n="hudR">卖方 · 红军</span><span class="flag red" data-i18n="flagS">空</span></div>
+    <div class="def-wrap" id="defWrap">
+      <button id="defBtn" class="def-btn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="defPop" data-i18n-title="defBtnT">
+        <span class="def-ico" aria-hidden="true">🛡️</span><span id="defLbl">防线 1%</span><span class="def-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="def-pop" id="defPop" role="listbox" hidden>
+        <button type="button" role="option" data-step="auto">自动 (1%/层)</button>
+        <button type="button" role="option" data-step="0.5">每 0.5% 一层</button>
+        <button type="button" role="option" data-step="1">每 1% 一层</button>
+        <button type="button" role="option" data-step="2">每 2% 一层</button>
+      </div>
+    </div>
     <div class="legend" id="legend"></div>
   </section>
 
@@ -333,6 +344,6 @@
     </div>
   </div>
 </div>
-<script type="module" src="js/app.js?v=6dd8875c"></script>
+<script type="module" src="js/app.js?v=fdac0e84"></script>
 </body>
 </html>

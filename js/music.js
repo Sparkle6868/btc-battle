@@ -222,6 +222,34 @@ export class WarMusic {
     this.brass(t, side === 'blue' ? 50 : 57, 0.7, 1, side === 'blue' ? 62 : 45);
     this.taiko(t, 1, 'music', 1.1);
   }
+  breach(side, recaptured = false, t = this.ctx.currentTime + 0.02) { // 防线攻破 / 夺回：重鼓碎盾 + 号角
+    const c = this.ctx;
+    if (this.sfxOn) {
+      this.taiko(t, recaptured ? 0.72 : 1.0, 'sfx', recaptured ? 1.0 : 1.15);
+      const nz = this._noiseSrc(t, recaptured ? 0.45 : 0.75);
+      const bp = c.createBiquadFilter(); bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(recaptured ? 1200 : 1650, t);
+      bp.frequency.exponentialRampToValueAtTime(280, t + (recaptured ? 0.42 : 0.68));
+      bp.Q.value = 0.9;
+      const ng = c.createGain();
+      ng.gain.setValueAtTime(recaptured ? 0.42 : 0.62, t);
+      ng.gain.exponentialRampToValueAtTime(0.0001, t + (recaptured ? 0.45 : 0.72));
+      nz.connect(bp).connect(ng);
+      this._out(ng, 'sfx', 0.45);
+      this.cymbal(t + 0.02, recaptured ? 1.0 : 1.9, recaptured ? 0.45 : 0.72, false, 'sfx');
+    }
+    if (this.musicOn) {
+      if (recaptured) {
+        this.brass(t + 0.03, side === 'blue' ? 57 : 53, 0.42, 0.82);
+      } else if (side === 'blue') {
+        this.brass(t + 0.02, 50, 0.22, 0.9);
+        this.brass(t + 0.2, 57, 0.55, 0.95, 62);
+      } else {
+        this.brass(t + 0.02, 57, 0.22, 0.9);
+        this.brass(t + 0.2, 50, 0.55, 0.95, 45);
+      }
+    }
+  }
 
   // ---------- 编曲调度 ----------
   _bar(t) {
@@ -357,4 +385,5 @@ export class AudioController {
   impact(usd, side) { if (this.engine && this.engine.sfxOn && this.running) this.engine.impact(usd, side); }
   fanfare(side) { if (this.engine && this.engine.musicOn && this.running) this.engine.fanfare(side); }
   surge(side) { if (this.engine && this.engine.musicOn && this.running) this.engine.surgeHit(side); }
+  breach(side, recaptured = false) { if (this.on) this.engine.breach(side, recaptured); }
 }

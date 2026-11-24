@@ -1,5 +1,5 @@
 // 中英文切换：?lang=zh|en > localStorage > 浏览器语言（zh* → 中文，其它 → 英文）
-import { lsGet, lsSet } from './storage.js?v=6dd8875c';
+import { lsGet, lsSet } from './storage.js?v=fdac0e84';
 const KEY = 'cw_lang';
 export const escH = (x) => String(x).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function detect() {
@@ -65,6 +65,17 @@ const D = {
     basisWait: '战况依据：等待数据…', basis: '战况依据：', b10: '10秒', b60: '1分钟', bOnly: (n) => `(仅${n}秒)`, bLast: '最新', bTk: '吃单买:卖', bBk: '挂单买:卖',
     hudL: '蓝军 · 买方', hudR: '卖方 · 红军',
     legend: (a, b, c) => `小兵 = 成交 · 炮弹 ≥ $${a} · 重炮 ≥ $${b} · 🐋 空袭 ≥ $${c}`,
+    defBtnT: '防线间距：以当日 UTC 00:00 开盘价为 0% 基准，每层对应真实价格防线（含盘口厚度护甲）',
+    defLblAuto: (s) => `防线 ${s}%`,
+    defLblFixed: (s) => `防线 ${s}%`,
+    defOptAuto: (s) => `自动 (${s}%/层)`,
+    defOptStep: (s) => `每 ${s}% 一层`,
+    defBase: '日开',
+    defBase24: '24h基准',
+    defBreachTag: (p) => `⚔️ 攻破 ${p}`,
+    defRecapTag: (p) => `🛡️ 夺回 ${p}`,
+    defBreachBanner: (b, p, px) => `⚔️ ${b ? '蓝军' : '红军'}攻破 ${p} 防线！<small>${b ? '突破空军防线' : '击穿多军防线'} · ${px}</small>`,
+    defRecapBanner: (b, p, px) => `🛡️ ${b ? '蓝军' : '红军'}夺回 ${p} 防线<small>防线重筑 · ${px}</small>`,
     taker: '吃单', takerSub: '主动成交 · 谁在冲锋', w10: '10 秒', w60: '1 分钟', w300: '5 分钟', delta: '5 分钟净主动买入',
     only: (n) => `仅${n}秒`, cover: (p) => `仅覆盖±${p}%`, buy: '买', sell: '卖', bid: '买盘', ask: '卖盘',
     book: '挂单', bookSub: '盘口深度 · 谁的城墙厚', bb: '买一', ba: '卖一', spr: '价差',
@@ -131,6 +142,17 @@ const D = {
     basisWait: 'Why: waiting for data…', basis: 'Why: ', b10: '10s', b60: '1m', bOnly: (n) => `(only ${n}s)`, bLast: 'Last', bTk: 'Taker buy:sell', bBk: 'Book bid:ask',
     hudL: 'Blue Army · Buyers', hudR: 'Sellers · Red Army',
     legend: (a, b, c) => `Soldiers = trades · Shell ≥ $${a} · Heavy ≥ $${b} · 🐋 Air strike ≥ $${c}`,
+    defBtnT: 'Defense line spacing anchored to UTC 00:00 daily open (reinforced by real order-book depth)',
+    defLblAuto: (s) => `Lines ${s}%`,
+    defLblFixed: (s) => `Lines ${s}%`,
+    defOptAuto: (s) => `Auto (${s}%/layer)`,
+    defOptStep: (s) => `${s}% / layer`,
+    defBase: 'Open',
+    defBase24: '24h Ref',
+    defBreachTag: (p) => `⚔️ ${p} BREACHED`,
+    defRecapTag: (p) => `🛡️ ${p} HELD`,
+    defBreachBanner: (b, p, px) => `⚔️ ${b ? 'Blue' : 'Red'} breaches ${p} line!<small>${b ? 'Bulls break bear defense' : 'Bears break bull defense'} · ${px}</small>`,
+    defRecapBanner: (b, p, px) => `🛡️ ${b ? 'Blue' : 'Red'} reclaims ${p} line<small>Defense rebuilt · ${px}</small>`,
     taker: 'Takers', takerSub: 'Market orders · who is charging', w10: '10s', w60: '1 min', w300: '5 min', delta: '5-min net taker buy',
     only: (n) => `only ${n}s`, cover: (p) => `covers only ±${p}%`, buy: 'Buy', sell: 'Sell', bid: 'Bids', ask: 'Asks',
     book: 'Order Book', bookSub: 'Depth · whose wall is thicker', bb: 'Bid', ba: 'Ask', spr: 'Spread',
