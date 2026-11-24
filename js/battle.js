@@ -1,7 +1,7 @@
 // 战场动画：Canvas 2D，蓝军（多）在左，红军（空）在右
 // 一期暗黑奇幻升级：数据天象与符文护盾 / 天基裁决光柱与顿帧 / 前线对波漩涡与总攻齐射 / 大单连击计数
-import { t as tr, fmtUsd } from './i18n.js?v=d48474ac';
-import { makeUnitSprites, drawStandard, Fortress, UNIT } from './units.js?v=d48474ac';
+import { t as tr, fmtUsd } from './i18n.js?v=6dd8875c';
+import { makeUnitSprites, drawStandard, Fortress, UNIT } from './units.js?v=6dd8875c';
 const TAU = Math.PI * 2;
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));

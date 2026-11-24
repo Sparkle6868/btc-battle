@@ -1,5 +1,5 @@
 // 中英文切换：?lang=zh|en > localStorage > 浏览器语言（zh* → 中文，其它 → 英文）
-import { lsGet, lsSet } from './storage.js?v=d48474ac';
+import { lsGet, lsSet } from './storage.js?v=6dd8875c';
 const KEY = 'cw_lang';
 export const escH = (x) => String(x).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function detect() {
@@ -108,7 +108,6 @@ const D = {
     repSub: 'BTC 实时多空作战战报', repTk1m: '1 分钟吃单', repBk05: '±0.5% 盘口',
     repPerp: '资金费率 / OI', repLiq: '5 分钟爆仓', repDelta5m: '5 分钟净主动买', repHiLo: '24h 高 / 低',
     repCbPrem: 'CB 美盘溢价', repFng: '恐慌贪婪',
-    swNew: '✨ 发现新版本，刷新即可更新', swReload: '立即刷新',
   },
   en: {
     title: (p) => `${p ? p + ' · ' : ''}BTC War Room | Live Bitcoin Battle Command`,
@@ -175,7 +174,6 @@ const D = {
     repSub: 'LIVE BTC WAR ROOM REPORT', repTk1m: '1m Taker Flow', repBk05: '±0.5% Order Book',
     repPerp: 'Funding / OI', repLiq: '5m Liquidations', repDelta5m: '5m Net Taker Buy', repHiLo: '24h High / Low',
     repCbPrem: 'CB Premium', repFng: 'Fear & Greed',
-    swNew: '✨ New version ready', swReload: 'Reload',
   },
 };
 export function t(key, ...a) {

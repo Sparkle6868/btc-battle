@@ -1,30 +1,30 @@
 // BTC War Room PWA Service Worker: caches app shell only (never exchange APIs or WebSockets)
-const CACHE = 'cw-shell-d48474ac';
+const CACHE = 'cw-shell-6dd8875c';
 const SHELL = [
   './',
   './index.html',
-  './style.css?v=d48474ac',
+  './style.css?v=6dd8875c',
   './manifest.webmanifest',
   './favicon.svg',
   './favicon.png',
   './icon-192.png',
   './icon-512.png',
-  './js/app.js?v=d48474ac',
-  './js/battle.js?v=d48474ac',
-  './js/chart.js?v=d48474ac',
-  './js/feeds.js?v=d48474ac',
-  './js/futures.js?v=d48474ac',
-  './js/i18n.js?v=d48474ac',
-  './js/intel.js?v=d48474ac',
-  './js/music.js?v=d48474ac',
-  './js/net.js?v=d48474ac',
-  './js/share.js?v=d48474ac',
-  './js/storage.js?v=d48474ac',
-  './js/units.js?v=d48474ac',
+  './js/app.js?v=6dd8875c',
+  './js/battle.js?v=6dd8875c',
+  './js/chart.js?v=6dd8875c',
+  './js/feeds.js?v=6dd8875c',
+  './js/futures.js?v=6dd8875c',
+  './js/i18n.js?v=6dd8875c',
+  './js/intel.js?v=6dd8875c',
+  './js/music.js?v=6dd8875c',
+  './js/net.js?v=6dd8875c',
+  './js/share.js?v=6dd8875c',
+  './js/storage.js?v=6dd8875c',
+  './js/units.js?v=6dd8875c',
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {

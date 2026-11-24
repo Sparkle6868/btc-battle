@@ -1,12 +1,12 @@
-import { FeedManager, SOURCES, BTC_MARKET, fetchBinance1s, fetchBinanceAggTrades, fetchOkxTrades, fetchCoinbaseTrades } from './feeds.js?v=d48474ac';
-import { Battle } from './battle.js?v=d48474ac';
-import { t as T, setLang, onLang, applyI18n, fmtUsd, fmtShort, fmtNum } from './i18n.js?v=d48474ac';
-import { AudioController } from './music.js?v=d48474ac';
-import { lsGet, lsSet } from './storage.js?v=d48474ac';
-import { FuturesFeed } from './futures.js?v=d48474ac';
-import { KlineChart } from './chart.js?v=d48474ac';
-import { CrossExchangeFeed, MtfTracker, fetchFearGreed, getTradingSession } from './intel.js?v=d48474ac';
-import { initShare } from './share.js?v=d48474ac';
+import { FeedManager, SOURCES, BTC_MARKET, fetchBinance1s, fetchBinanceAggTrades, fetchOkxTrades, fetchCoinbaseTrades } from './feeds.js?v=6dd8875c';
+import { Battle } from './battle.js?v=6dd8875c';
+import { t as T, setLang, onLang, applyI18n, fmtUsd, fmtShort, fmtNum } from './i18n.js?v=6dd8875c';
+import { AudioController } from './music.js?v=6dd8875c';
+import { lsGet, lsSet } from './storage.js?v=6dd8875c';
+import { FuturesFeed } from './futures.js?v=6dd8875c';
+import { KlineChart } from './chart.js?v=6dd8875c';
+import { CrossExchangeFeed, MtfTracker, fetchFearGreed, getTradingSession } from './intel.js?v=6dd8875c';
+import { initShare } from './share.js?v=6dd8875c';
 
 const $ = (id) => document.getElementById(id);
 const pad = (n) => String(n).padStart(2, '0');
@@ -1011,27 +1011,7 @@ klineChart.start();
 crossEx.start();
 mtf.start();
 
-// ---------- PWA Service Worker 注册与更新提示 ----------
+// ---------- PWA Service Worker 静默注册 ----------
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
-  const swToast = $('swToast'), swReload = $('swReload'), swClose = $('swClose');
-  let swRefreshing = false;
-  const showSwPrompt = (worker) => {
-    if (!swToast || !worker) return;
-    swToast.hidden = false;
-    swReload.onclick = () => { swToast.hidden = true; worker.postMessage('SKIP_WAITING'); };
-  };
-  if (swClose) swClose.onclick = () => { swToast.hidden = true; };
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!swRefreshing) { swRefreshing = true; location.reload(); }
-  });
-  navigator.serviceWorker.register('./sw.js').then((reg) => {
-    if (reg.waiting) showSwPrompt(reg.waiting);
-    reg.addEventListener('updatefound', () => {
-      const nw = reg.installing;
-      if (!nw) return;
-      nw.addEventListener('statechange', () => {
-        if (nw.state === 'installed' && navigator.serviceWorker.controller) showSwPrompt(nw);
-      });
-    });
-  }).catch(() => {});
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
