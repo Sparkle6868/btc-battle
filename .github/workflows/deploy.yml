@@ -43,7 +43,7 @@ jobs:
           rm -rf _site
           mkdir -p _site/js
           cp .nojekyll index.html style.css sw.js manifest.webmanifest \
-             favicon.svg favicon.png apple-touch-icon.png \
+             favicon.svg favicon.png apple-touch-icon.png avatar.png \
              icon-192.png icon-512.png icon-maskable-512.png \
              og.jpg og.png _site/
           cp js/*.js _site/js/
