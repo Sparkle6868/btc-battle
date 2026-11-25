@@ -17,3 +17,7 @@
 
 - 部署前运行 `node scripts/stamp.mjs`（或 `./stamp.sh`）更新 CSS / JS / Service Worker 缓存版本号。
 - 语法检查：`for f in js/*.js sw.js scripts/stamp.mjs; do node --check "$f"; done`
+
+---
+
+<sub>本项目基于原作者大橙子（[@0xVeryBigOrange](https://x.com/0xVeryBigOrange)）的开源项目「Crypto War · 多空战场」二次修改。</sub>

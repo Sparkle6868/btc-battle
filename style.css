@@ -399,6 +399,9 @@ canvas.micro-spark{width:100%;height:22px;display:block;margin-top:3px;border-ra
 /* ---------- 页脚免责声明 ---------- */
 .foot{padding:4px clamp(12px,3vw,28px) 28px}
 .disclaimer{color:var(--mut);font-size:11.5px;text-align:center;margin:4px 0 0}
+.credit{color:rgba(140,150,184,.58);font-size:10.5px;text-align:center;margin:6px 0 0;line-height:1.5}
+.credit a{color:rgba(165,180,215,.72);text-decoration:underline;text-decoration-color:rgba(165,180,215,.3);text-underline-offset:2px;transition:color .2s,text-decoration-color .2s}
+.credit a:hover{color:var(--txt);text-decoration-color:var(--txt)}
 
 /* ---------- 音频浮窗 & 响应式 ---------- */
 .audio-wrap{position:relative}

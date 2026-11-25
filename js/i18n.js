@@ -1,5 +1,5 @@
 // 中英文切换：?lang=zh|en > localStorage > 浏览器语言（zh* → 中文，其它 → 英文）
-import { lsGet, lsSet } from './storage.js?v=4f9251e5';
+import { lsGet, lsSet } from './storage.js?v=de05a927';
 const KEY = 'cw_lang';
 export const escH = (x) => String(x).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function detect() {
@@ -85,6 +85,7 @@ const D = {
     noBig: (m, th) => `近 ${m} 分钟没有 ≥ $${th} 的大单<br><small>行情清淡，可点上方调低门槛</small>`,
     bigSince: (m) => `已载入近 ${m} 分钟 · 同一毫秒同方向的成交合并为一笔主动单`,
     disclaimer: '行情来自 Binance / OKX / Coinbase / Bybit，情绪指数来自 alternative.me 公共接口（无需 API Key），仅供娱乐参考，不构成投资建议 · 蓝 = 多 / 买方，红 = 空 / 卖方',
+    credit: '本项目基于原作者大橙子（<a href="https://x.com/0xVeryBigOrange" target="_blank" rel="noopener noreferrer">@0xVeryBigOrange</a>）的开源项目「Crypto War · 多空战场」二次修改',
     flowCap: '近 2 分钟 主动买(上) / 卖(下) · 黄线=累计净额 · 白线=价格',
     flowCap15: '近 15 分钟 主动买(上) / 卖(下) · 黄线=累计净额 · 白线=价格',
     depthWait: '等待盘口数据…', wallB: '买盘城墙 ', wallA: '卖盘城墙 ',
@@ -196,6 +197,7 @@ const D = {
     noBig: (m, th) => `No trades ≥ $${th} in the last ${m} min<br><small>Quiet market — lower the threshold above</small>`,
     bigSince: (m) => `Last ${m} min loaded · fills in the same millisecond and side are merged into one taker order`,
     disclaimer: 'Market data from Binance / OKX / Coinbase / Bybit and sentiment from alternative.me public feeds (no API key). For entertainment only, not investment advice · Blue = bulls / buyers, Red = bears / sellers',
+    credit: 'Modified from the open-source project "Crypto War" by <a href="https://x.com/0xVeryBigOrange" target="_blank" rel="noopener noreferrer">@0xVeryBigOrange</a>',
     flowCap: 'Last 2m · Taker Buys/Sells · Yellow=CVD · White=Price',
     flowCap15: 'Last 15m · Taker Buys/Sells · Yellow=CVD · White=Price',
     depthWait: 'Waiting for order book…', wallB: 'Bid wall ', wallA: 'Ask wall ',

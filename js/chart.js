@@ -1,7 +1,7 @@
 // BTC 实时 K 线走势图（纯 Canvas 绘制，支持 1m / 5m / 15m / 1h 与鼠标十字光标）
-import { fetchJson, binFetch } from './net.js?v=4f9251e5';
-import { lsGet, lsSet } from './storage.js?v=4f9251e5';
-import { t as T, fmtNum } from './i18n.js?v=4f9251e5';
+import { fetchJson, binFetch } from './net.js?v=de05a927';
+import { lsGet, lsSet } from './storage.js?v=de05a927';
+import { t as T, fmtNum } from './i18n.js?v=de05a927';
 
 const TF_KEY = 'cw_tf';
 const OV_KEY = 'cw_chart_ov';

@@ -18,11 +18,17 @@ const concat = hashInputs
   .join('');
 
 const version = crypto.createHash('sha1').update(concat, 'utf8').digest('hex').slice(0, 8);
+const ogPath = path.join(root, 'og.jpg');
+const ogVersion = fs.existsSync(ogPath)
+  ? crypto.createHash('sha1').update(fs.readFileSync(ogPath)).digest('hex').slice(0, 8)
+  : version;
 
 const targets = [
   {
     rel: 'index.html',
-    transform: (s) => s.replace(/(style\.css|app\.js)\?v=[A-Za-z0-9]+/g, `$1?v=${version}`),
+    transform: (s) => s
+      .replace(/(style\.css|app\.js)\?v=[A-Za-z0-9]+/g, `$1?v=${version}`)
+      .replace(/(og\.jpg)\?v=[A-Za-z0-9]+/g, `$1?v=${ogVersion}`),
   },
   ...jsFiles.map((rel) => ({
     rel,
