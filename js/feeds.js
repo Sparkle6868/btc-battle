@@ -1,6 +1,6 @@
 // 行情数据层：Binance / OKX / Coinbase 公共 WebSocket（无需 API Key），自动故障切换
 // 输出统一事件：trade / ticker / book / status
-import { fetchJson, binFetch, binCanSpend, binBlockedFor } from './net.js?v=de05a927';
+import { fetchJson, binFetch, binCanSpend, binBlockedFor } from './net.js?v=33d8746f';
 
 
 export const SOURCES = {

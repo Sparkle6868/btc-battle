@@ -1,6 +1,6 @@
 // BTC 永续合约情报层：Binance USD-M 优先（资金费率 / 标记价 / OI / 大户持仓比 vs 散户人数比），OKX SWAP 兜底
 // 爆仓流：Binance @forceOrder + OKX liquidation-orders 双所实时聚合 + 启动历史回填
-import { fetchJson } from './net.js?v=de05a927';
+import { fetchJson } from './net.js?v=33d8746f';
 
 const BIN_FAPI = 'https://fapi.binance.com';
 const BIN_FWS = 'wss://fstream.binance.com';

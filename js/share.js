@@ -1,5 +1,5 @@
 // One-click Battle Report PNG generator (1200x675 Canvas 2D) & share modal controller
-import { t as T, fmtUsd } from './i18n.js?v=de05a927';
+import { t as T, fmtUsd } from './i18n.js?v=33d8746f';
 
 const SANS = '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif';
 const MONO = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
@@ -226,7 +226,7 @@ export async function renderReportBlob(data) {
 
   // Footer
   ctx.textAlign = 'left'; ctx.fillStyle = '#64748b'; ctx.font = `600 13px ${SANS}`;
-  ctx.fillText('BTC War Room · Binance / OKX / Coinbase Real-Time Command Center', 36, H - 22);
+  ctx.fillText('BTC War Room · by @Sparkle6868 · Binance / OKX / Coinbase', 36, H - 22);
   ctx.textAlign = 'right';
   ctx.fillText(location.host + location.pathname, W - 36, H - 22);
 

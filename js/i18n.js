@@ -1,5 +1,5 @@
 // 中英文切换：?lang=zh|en > localStorage > 浏览器语言（zh* → 中文，其它 → 英文）
-import { lsGet, lsSet } from './storage.js?v=de05a927';
+import { lsGet, lsSet } from './storage.js?v=33d8746f';
 const KEY = 'cw_lang';
 export const escH = (x) => String(x).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function detect() {
@@ -51,6 +51,8 @@ const D = {
     introGather: '集结部队中…', introConn: (l) => `连接指挥室情报 · ${l}…`, introScout: '侦察盘口与合约数据…', introReady: '部队就位',
     introStart: '⚔️ 战斗开始！', introClick: '战鼓已备好 · 点击开战',
     home: 'BTC War Room 首页', wmCn: '比特币多空指挥室',
+    byTitle: '关注 Sparkle @Sparkle6868', followX: '关注 @Sparkle6868',
+    auSub: 'BTC War Room · 比特币多空指挥室 维护者', ghSrc: 'GitHub 源码',
     exBarAria: '三所 BTC 实时报价与美盘溢价', exClickT: '点击切换主数据源（再次点击恢复自动）',
     cbPremShort: '美盘溢价', cbPremT: 'Coinbase BTC-USD 与 Binance BTCUSDT 的实时价差（美盘买压/抛压风向标）',
     connecting: '连接中…', source: '数据源', auto: '自动', music: '♪ 配乐',
@@ -163,6 +165,8 @@ const D = {
     introGather: 'Mustering the troops…', introConn: (l) => `Connecting to ${l}…`, introScout: 'Scouting order flow & futures…', introReady: 'Troops in position',
     introStart: '⚔️ Battle begins!', introClick: 'War drums ready · click to fight',
     home: 'BTC War Room home', wmCn: 'Bitcoin War Room',
+    byTitle: 'Follow Sparkle @Sparkle6868', followX: 'Follow @Sparkle6868',
+    auSub: 'Maintainer of BTC War Room', ghSrc: 'GitHub Source',
     exBarAria: 'Live BTC quotes across 3 exchanges & Coinbase premium', exClickT: 'Click to switch primary feed (click again for Auto)',
     cbPremShort: 'CB Prem', cbPremT: 'Coinbase BTC-USD vs Binance BTCUSDT spread (US spot demand gauge)',
     connecting: 'Connecting…', source: 'Data source', auto: 'Auto', music: '♪ Music',
