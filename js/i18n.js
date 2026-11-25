@@ -1,5 +1,5 @@
 // 中英文切换：?lang=zh|en > localStorage > 浏览器语言（zh* → 中文，其它 → 英文）
-import { lsGet, lsSet } from './storage.js?v=33d8746f';
+import { lsGet, lsSet } from './storage.js?v=8fcf62d3';
 const KEY = 'cw_lang';
 export const escH = (x) => String(x).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function detect() {
@@ -134,7 +134,8 @@ const D = {
     flowAgg: '三所聚合', flowSingle: '单所现货',
     cvdDivBull: '🟢 多头吸筹背离', cvdDivBear: '🔴 空头派发背离',
     wallTopTitle: '巨鲸挂单墙 Top 3（±3.5%）', wallEmpty: '盘口暂无 ≥ $30万 集中墙',
-    wallSpoofTag: '虚晃撤单', wallIcebergTag: '冰山承接',
+    wallSpoofTag: (side) => `${side === 'blue' ? '多军' : '空军'}虚晃撤单`,
+    wallIcebergTag: (side) => `${side === 'blue' ? '多军' : '空军'}冰山承接`,
     ovLines: '防线',
     cmeGapTitle: 'CME 周末缺口', cmeGapNone: '近期无明显缺口', cmeGapFilled: '已回补 100%',
     cmeGapOpen: (pct, fill) => `未回补 · 距 ${pct} (填${fill}%)`,
@@ -146,8 +147,8 @@ const D = {
     kfLiq: (side, u) => `⚡ ${side} ${u}`,
     kfBreach: (p) => `⚔️ 攻破 ${p}`,
     kfRecap: (p) => `🛡️ 夺回 ${p}`,
-    kfSpoof: (u) => `💨 虚晃撤单 ${u}`,
-    kfIceberg: (u) => `🛡️ 冰山承接 ${u}`,
+    kfSpoof: (side, u) => `💨 ${side === 'blue' ? '多军' : '空军'}虚晃撤单 ${u}`,
+    kfIceberg: (side, u) => `🛡️ ${side === 'blue' ? '多军' : '空军'}冰山承接 ${u}`,
     tipShield: (side) => `${side === 'blue' ? '蓝军' : '红军'}要塞符文护盾`,
     tipShieldSub: (pct, usd, alert) => `深度强度 ${pct}% · ±0.5% 墙 ${usd}${alert > 0.2 ? ' · ⚠️ 主堡被围' : ''}`,
     tipWall: (side, px) => `🧱 ${side === 'blue' ? '买盘' : '卖盘'}巨鲸墙 ${px}`,
@@ -248,7 +249,8 @@ const D = {
     flowAgg: '3-Ex Agg', flowSingle: 'Single Ex',
     cvdDivBull: '🟢 Bull Absorption', cvdDivBear: '🔴 Bear Distribution',
     wallTopTitle: 'Top 3 Order-Book Walls (±3.5%)', wallEmpty: 'No resting walls ≥ $300K',
-    wallSpoofTag: 'SPOOF PULL', wallIcebergTag: 'ICEBERG HOLD',
+    wallSpoofTag: (side) => `${side === 'blue' ? 'BULL' : 'BEAR'} SPOOF PULL`,
+    wallIcebergTag: (side) => `${side === 'blue' ? 'BULL' : 'BEAR'} ICEBERG HOLD`,
     ovLines: 'Lines',
     cmeGapTitle: 'CME Weekend Gap', cmeGapNone: 'No recent gap', cmeGapFilled: 'Filled 100%',
     cmeGapOpen: (pct, fill) => `Open · ${pct} away (${fill}% filled)`,
@@ -260,8 +262,8 @@ const D = {
     kfLiq: (side, u) => `⚡ ${side} ${u}`,
     kfBreach: (p) => `⚔️ Breached ${p}`,
     kfRecap: (p) => `🛡️ Reclaimed ${p}`,
-    kfSpoof: (u) => `💨 Spoof Pull ${u}`,
-    kfIceberg: (u) => `🛡️ Iceberg ${u}`,
+    kfSpoof: (side, u) => `💨 ${side === 'blue' ? 'Bull' : 'Bear'} Spoof ${u}`,
+    kfIceberg: (side, u) => `🛡️ ${side === 'blue' ? 'Bull' : 'Bear'} Iceberg ${u}`,
     tipShield: (side) => `${side === 'blue' ? 'Blue' : 'Red'} Bastion Shield`,
     tipShieldSub: (pct, usd, alert) => `Strength ${pct}% · ±0.5% Wall ${usd}${alert > 0.2 ? ' · ⚠️ Besieged' : ''}`,
     tipWall: (side, px) => `🧱 ${side === 'blue' ? 'Bid' : 'Ask'} Whale Wall ${px}`,

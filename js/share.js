@@ -1,5 +1,5 @@
 // One-click Battle Report PNG generator (1200x675 Canvas 2D) & share modal controller
-import { t as T, fmtUsd } from './i18n.js?v=33d8746f';
+import { t as T, fmtUsd } from './i18n.js?v=8fcf62d3';
 
 const SANS = '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif';
 const MONO = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';

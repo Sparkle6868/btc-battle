@@ -1,12 +1,12 @@
-import { FeedManager, MultiSpotAggregator, SOURCES, BTC_MARKET, fetchBinance1s, fetchBinanceAggTrades, fetchOkxTrades, fetchCoinbaseTrades } from './feeds.js?v=33d8746f';
-import { Battle } from './battle.js?v=33d8746f';
-import { t as T, setLang, onLang, applyI18n, fmtUsd, fmtShort, fmtNum } from './i18n.js?v=33d8746f';
-import { AudioController } from './music.js?v=33d8746f';
-import { lsGet, lsSet } from './storage.js?v=33d8746f';
-import { FuturesFeed, computeRegime, estimateLiqZones } from './futures.js?v=33d8746f';
-import { KlineChart } from './chart.js?v=33d8746f';
-import { CrossExchangeFeed, MtfTracker, fetchFearGreed, getTradingSession } from './intel.js?v=33d8746f';
-import { initShare } from './share.js?v=33d8746f';
+import { FeedManager, MultiSpotAggregator, SOURCES, BTC_MARKET, fetchBinance1s, fetchBinanceAggTrades, fetchOkxTrades, fetchCoinbaseTrades } from './feeds.js?v=8fcf62d3';
+import { Battle } from './battle.js?v=8fcf62d3';
+import { t as T, setLang, onLang, applyI18n, fmtUsd, fmtShort, fmtNum } from './i18n.js?v=8fcf62d3';
+import { AudioController } from './music.js?v=8fcf62d3';
+import { lsGet, lsSet } from './storage.js?v=8fcf62d3';
+import { FuturesFeed, computeRegime, estimateLiqZones } from './futures.js?v=8fcf62d3';
+import { KlineChart } from './chart.js?v=8fcf62d3';
+import { CrossExchangeFeed, MtfTracker, fetchFearGreed, getTradingSession } from './intel.js?v=8fcf62d3';
+import { initShare } from './share.js?v=8fcf62d3';
 
 const $ = (id) => document.getElementById(id);
 const pad = (n) => String(n).padStart(2, '0');
@@ -567,11 +567,12 @@ function renderKillFeed(list = battle.killFeed) {
   for (const ev of (list || []).slice(0, 4)) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    const cls = ev.type === 'liq' ? 'liq' : (ev.type === 'spoof' || ev.type === 'iceberg') ? 'wall' : ev.side;
+    const cls = ev.type === 'liq' ? 'liq' : (ev.type === 'spoof' || ev.type === 'iceberg') ? `wall ${ev.side || ''}` : ev.side;
     btn.className = 'kf-pill ' + cls;
     const d = new Date(ev.ts);
     const tm = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
     btn.textContent = `${tm} · ${ev.label}`;
+    btn.title = ev.price > 0 ? `${ev.label} · $${Math.round(ev.price).toLocaleString('en-US')}` : ev.label;
     btn.addEventListener('click', () => {
       battle.replayEvent(ev);
       if (ev.ts) klineChart.highlightTs(ev.ts);

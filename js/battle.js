@@ -1,7 +1,7 @@
 // 战场动画：Canvas 2D，蓝军（多）在左，红军（空）在右
 // 一期暗黑奇幻升级：数据天象与符文护盾 / 天基裁决光柱与顿帧 / 前线对波漩涡与总攻齐射 / 大单连击计数
-import { t as tr, fmtUsd } from './i18n.js?v=33d8746f';
-import { makeUnitSprites, drawStandard, Fortress, UNIT, UNIT_SPEC } from './units.js?v=33d8746f';
+import { t as tr, fmtUsd } from './i18n.js?v=8fcf62d3';
+import { makeUnitSprites, drawStandard, Fortress, UNIT, UNIT_SPEC } from './units.js?v=8fcf62d3';
 const TAU = Math.PI * 2;
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -2313,11 +2313,11 @@ export class Battle {
       }
       this.texts.push({
         x: mx, y: this.laneTop + 26, vx: 0,
-        txt: `💨 ${tr('wallSpoofTag')} ${fmtUsd(usd)}`,
-        side, col: '#cbd5f5', lvl: 2, life: 2.0, max: 2.0,
+        txt: `💨 ${tr('wallSpoofTag', side)} ${fmtUsd(usd)}`,
+        side, col: side === 'blue' ? '#93c5fd' : '#fca5a5', lvl: 2, life: 2.0, max: 2.0,
       });
       if (!noFeed) {
-        this._pushFeed({ side, type: 'spoof', price, usd, label: tr('kfSpoof', fmtUsd(usd)) });
+        this._pushFeed({ side, type: 'spoof', price, usd, label: tr('kfSpoof', side, fmtUsd(usd)) });
       }
     } else if (type === 'iceberg') {
       this.rings.push({ x: mx, y: midY, r: 8, max: 64, life: 0.65, t: 0, col: [253, 230, 138] });
@@ -2328,11 +2328,11 @@ export class Battle {
       }
       this.texts.push({
         x: mx, y: this.laneTop + 26, vx: 0,
-        txt: `🛡️ ${tr('wallIcebergTag')} ${fmtUsd(usd)}`,
-        side, col: '#fde68a', lvl: 2, life: 2.1, max: 2.1,
+        txt: `🛡️ ${tr('wallIcebergTag', side)} ${fmtUsd(usd)}`,
+        side, col: side === 'blue' ? '#93c5fd' : '#fca5a5', lvl: 2, life: 2.1, max: 2.1,
       });
       if (!noFeed) {
-        this._pushFeed({ side, type: 'iceberg', price, usd, label: tr('kfIceberg', fmtUsd(usd)) });
+        this._pushFeed({ side, type: 'iceberg', price, usd, label: tr('kfIceberg', side, fmtUsd(usd)) });
       }
     }
   }
