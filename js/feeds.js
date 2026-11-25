@@ -1,6 +1,6 @@
 // 行情数据层：Binance / OKX / Coinbase 公共 WebSocket（无需 API Key），自动故障切换
 // 输出统一事件：trade / ticker / book / status
-import { fetchJson, binFetch, binCanSpend, binBlockedFor } from './net.js?v=fdac0e84';
+import { fetchJson, binFetch, binCanSpend, binBlockedFor } from './net.js?v=4f9251e5';
 
 
 export const SOURCES = {
@@ -377,4 +377,131 @@ export async function fetchCoinbaseTrades(m, sinceMs, maxPages = 3, alive = () =
   }
   out.sort((a, b) => a.ts - b.ts);
   return { trades: out, complete };
+}
+
+// ---------- 三所现货成交流轻量聚合器（仅连非主源的另外两家，只订阅成交） ----------
+const EX_TAG = { binance: 'BN', okx: 'OKX', coinbase: 'CB' };
+export class MultiSpotAggregator {
+  constructor({ onTrade } = {}) {
+    this.onTrade = onTrade || null;
+    this.primary = null;
+    this.running = false;
+    this.conns = new Map(); // src -> { ws, pingT, retryT, backoff, hostIdx, closed }
+    this._onVis = () => {
+      if (!document.hidden && this.running) this._sync();
+    };
+    document.addEventListener('visibilitychange', this._onVis);
+  }
+
+  start(primary = 'binance') {
+    this.running = true;
+    this.primary = primary;
+    this._sync();
+  }
+
+  setPrimary(src) {
+    if (!SOURCES[src] || src === this.primary) return;
+    this.primary = src;
+    if (this.running) this._sync();
+  }
+
+  stop() {
+    this.running = false;
+    for (const src of [...this.conns.keys()]) this._close(src);
+    document.removeEventListener('visibilitychange', this._onVis);
+  }
+
+  _sync() {
+    if (!this.running) return;
+    const want = AUTO_ORDER.filter((s) => s !== this.primary);
+    for (const src of [...this.conns.keys()]) {
+      if (!want.includes(src)) this._close(src);
+    }
+    if (document.hidden) return;
+    for (const src of want) {
+      const c = this.conns.get(src);
+      if (!c || (!c.ws && !c.retryT)) this._open(src);
+    }
+  }
+
+  _close(src) {
+    const c = this.conns.get(src);
+    if (!c) return;
+    c.closed = true;
+    clearTimeout(c.retryT); c.retryT = null;
+    clearInterval(c.pingT); c.pingT = null;
+    if (c.ws) { try { c.ws.close(); } catch {} c.ws = null; }
+    this.conns.delete(src);
+  }
+
+  _open(src) {
+    const prev = this.conns.get(src);
+    const backoff = prev ? prev.backoff : 3000;
+    const hostIdx = prev ? prev.hostIdx : 0;
+    const st = { ws: null, pingT: null, retryT: null, backoff, hostIdx, closed: false };
+    this.conns.set(src, st);
+
+    const url = src === 'binance'
+      ? `${BINANCE_HOSTS[hostIdx % BINANCE_HOSTS.length].ws}/ws/btcusdt@aggTrade`
+      : src === 'okx'
+        ? 'wss://ws.okx.com/ws/v5/public'
+        : 'wss://ws-feed.exchange.coinbase.com';
+
+    let ws;
+    try { ws = new WebSocket(url); } catch { return this._scheduleRetry(src, st); }
+    st.ws = ws;
+
+    ws.onopen = () => {
+      if (st.closed || !this.running) { try { ws.close(); } catch {} return; }
+      st.backoff = 3000;
+      if (src === 'okx') {
+        try { ws.send(JSON.stringify({ op: 'subscribe', args: [{ channel: 'trades', instId: BTC_MARKET.okx }] })); } catch {}
+        st.pingT = setInterval(() => { if (ws.readyState === 1) try { ws.send('ping'); } catch {} }, 20000);
+      } else if (src === 'coinbase') {
+        try { ws.send(JSON.stringify({ type: 'subscribe', product_ids: [BTC_MARKET.coinbase], channels: ['matches'] })); } catch {}
+      }
+    };
+
+    ws.onmessage = (e) => {
+      if (st.closed || !this.running || !this.onTrade || e.data === 'pong') return;
+      let d;
+      try { d = JSON.parse(e.data); } catch { return; }
+      const ex = EX_TAG[src];
+      if (src === 'binance') {
+        if (d && d.e === 'aggTrade') {
+          this.onTrade({ price: +d.p, qty: +d.q, side: d.m ? 'sell' : 'buy', ts: +d.T || Date.now(), ex, src });
+        }
+      } else if (src === 'okx') {
+        if (d && d.arg && d.arg.channel === 'trades' && Array.isArray(d.data)) {
+          for (const t of d.data) {
+            this.onTrade({ price: +t.px, qty: +t.sz, side: t.side === 'sell' ? 'sell' : 'buy', ts: +t.ts || Date.now(), ex, src });
+          }
+        }
+      } else if (src === 'coinbase') {
+        if (d && d.type === 'match') {
+          this.onTrade({ price: +d.price, qty: +d.size, side: d.side === 'sell' ? 'buy' : 'sell', ts: Date.parse(d.time) || Date.now(), ex, src });
+        }
+      }
+    };
+
+    ws.onerror = () => {};
+    ws.onclose = () => {
+      clearInterval(st.pingT); st.pingT = null;
+      st.ws = null;
+      if (st.closed || !this.running || this.primary === src) return;
+      if (src === 'binance') st.hostIdx = (st.hostIdx + 1) % BINANCE_HOSTS.length;
+      this._scheduleRetry(src, st);
+    };
+  }
+
+  _scheduleRetry(src, st) {
+    if (st.closed || !this.running || document.hidden || this.primary === src) return;
+    const d = st.backoff;
+    st.backoff = Math.min(30000, st.backoff * 2);
+    clearTimeout(st.retryT);
+    st.retryT = setTimeout(() => {
+      st.retryT = null;
+      if (!st.closed && this.running && !document.hidden && this.primary !== src) this._open(src);
+    }, d);
+  }
 }

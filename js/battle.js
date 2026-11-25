@@ -1,7 +1,7 @@
 // 战场动画：Canvas 2D，蓝军（多）在左，红军（空）在右
 // 一期暗黑奇幻升级：数据天象与符文护盾 / 天基裁决光柱与顿帧 / 前线对波漩涡与总攻齐射 / 大单连击计数
-import { t as tr, fmtUsd } from './i18n.js?v=fdac0e84';
-import { makeUnitSprites, drawStandard, Fortress, UNIT } from './units.js?v=fdac0e84';
+import { t as tr, fmtUsd } from './i18n.js?v=4f9251e5';
+import { makeUnitSprites, drawStandard, Fortress, UNIT, UNIT_SPEC } from './units.js?v=4f9251e5';
 const TAU = Math.PI * 2;
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -66,8 +66,9 @@ export class Battle {
   constructor(canvas) {
     this.cv = canvas; this.ctx = canvas.getContext('2d');
     this.front = 0.5; this.frontTarget = 0.5; this.surge = null; this.surgeT = 0;
-    this.momentumS = 0; this.frontU = 0; this.frontTargetU = 0;
+    this.momentumS = 0; this.frontU = 0; this.frontTargetU = 0; this.camShift = 0;
     this.onBreach = null; this.onStepChange = null;
+    this.onFeedUpdate = null; this.onHover = null; this.onDemoSfx = null;
     this.def = {
       anchor: 0, anchorType: 'daily', price: 0, pct: 0,
       stepMode: 'auto', step: 1, initialized: false,
@@ -76,6 +77,9 @@ export class Battle {
     this.soldiers = []; this.bullets = []; this.shells = [];
     this.strikes = []; this.fissures = []; this.parts = []; this.smoke = [];
     this.rings = []; this.texts = []; this.scorch = []; this.streaks = []; this.embers = [];
+    this.orderWalls = []; this.liqZones = []; this.killFeed = [];
+    this._siegeAutoT = { blue: 0, red: 0 }; this._ballistaT = { blue: 0, red: 0 };
+    this._hoverPos = null; this._lastHoverKey = '';
     this.shake = 0; this.flash = 0; this.flashCol = '255,255,255'; this.t = 0;
     this.pending = { blue: 0, red: 0 }; this.intensity = 0; this.queue = [];
     this.q = initialQuality(); this.Q = QUALITY[this.q]; this.fpsN = 0; this.fpsT = 0; this.slowWins = 0;
@@ -110,6 +114,18 @@ export class Battle {
     };
     this._watchDpr();
     document.addEventListener('visibilitychange', () => { if (!document.hidden) { this.queue = []; this.pending = { blue: 0, red: 0 }; } });
+    if (this.cv && this.cv.addEventListener) {
+      this.cv.addEventListener('pointermove', (e) => {
+        const r = this.cv.getBoundingClientRect();
+        this._hoverPos = { x: e.clientX - r.left, y: e.clientY - r.top };
+        this._emitHover();
+      });
+      this.cv.addEventListener('pointerleave', () => {
+        this._hoverPos = null;
+        this._lastHoverKey = '';
+        this.onHover && this.onHover(null);
+      });
+    }
     this.resize(true);
     this._initWeather();
     for (let i = 0; i < 48; i++) this.embers.push(this._ember(true));
@@ -155,13 +171,14 @@ export class Battle {
     const p = clamp((y - this.horizon) / Math.max(1, this.H - this.horizon), 0, 1);
     const persp = 0.85 + 0.22 * p;
     const bow = bowDir ? Math.sin(p * Math.PI) * 5.5 * bowDir : 0;
-    return this.W * 0.5 + u * (this.defHalfSpan || this.W * 0.35) * persp + bow;
+    const shift = (this.camShift || 0) * (0.75 + 0.25 * p);
+    return clamp(this.W * 0.5 + shift + u * (this.defHalfSpan || this.W * 0.35) * persp + bow, this.baseL + 22, this.baseR - 22);
   }
   frontX(y = this.H * 0.72) {
     const f = this.def && this.def.anchor > 0
       ? this.defenseX(this.frontU, y, 0)
       : this.W * clamp(0.5 + (this.front - 0.5) * 1.5, 0.15, 0.85);
-    return f + Math.sin(y * 0.045 + this.t * 2.2) * 5 + Math.sin(y * 0.11 - this.t * 3.1) * 3;
+    return clamp(f + Math.sin(y * 0.045 + this.t * 2.2) * 5 + Math.sin(y * 0.11 - this.t * 3.1) * 3, this.baseL + 18, this.baseR - 18);
   }
 
   _renderBg() {
@@ -392,6 +409,7 @@ export class Battle {
         breakT: 0,
         rebuildT: 0,
         lastEventAt: -99,
+        breachCount: 0,
       });
     }
     return m;
@@ -441,7 +459,9 @@ export class Battle {
       ln.breakT = 0;
       ln.rebuildT = 0;
       ln.lastEventAt = -99;
+      ln.breachCount = 0;
     }
+    this.camShift = 0;
   }
 
   setDefenseState({ anchor, anchorType = 'daily', price, stepMode, wallMap } = {}) {
@@ -589,6 +609,7 @@ export class Battle {
 
     const pctVal = +(line.lvl * this.def.step).toFixed(1);
     const pctStr = (pctVal > 0 ? '+' : '') + pctVal + '%';
+    line.breachCount = (line.breachCount || 0) + 1;
     const tag = tr(recaptured ? 'defRecapTag' : 'defBreachTag', pctStr);
     this.texts.push({
       x: mx, y: this.laneTop + 14, vx: 0,
@@ -597,8 +618,19 @@ export class Battle {
       lvl: 2, life: 2.1, max: 2.1,
     });
 
+    const linePrice = this.def.anchor * (1 + pctVal / 100);
+    if (notify) {
+      this._pushFeed({
+        side: attackerSide,
+        type: recaptured ? 'recap' : 'breach',
+        lvl: line.lvl,
+        pct: pctVal,
+        price: linePrice,
+        recaptured,
+        label: tr(recaptured ? 'kfRecap' : 'kfBreach', pctStr),
+      });
+    }
     if (notify && this.onBreach) {
-      const linePrice = this.def.anchor * (1 + pctVal / 100);
       this.onBreach({ side: attackerSide, lvl: line.lvl, pct: pctVal, price: linePrice, recaptured });
     }
   }
@@ -612,10 +644,13 @@ export class Battle {
     this.pending = { blue: 0, red: 0 }; this.front = this.frontTarget = 0.5; this.surge = null; this.surgeT = 0; this.lastSurge = null;
     this.smoke = []; this.scorch = []; this.celebrateT = 0; this.shake = 0; this.flash = 0; this.intensity = 0;
     this.hitstop = 0; this.zoom = 1; this.zoomX = 0.5; this.zoomY = 0.65; this.volleyT = 0;
+    this.camShift = 0; this.killFeed = []; this.orderWalls = []; this.liqZones = [];
+    this.soldiers = this.soldiers.filter(s => (s.kind || 'infantry') === 'infantry');
     this.combo.blue = { count: 0, usd: 0, lastAt: -99, pop: 0 };
     this.combo.red = { count: 0, usd: 0, lastAt: -99, pop: 0 };
     this.resetDefense();
-    for (const f of Object.values(this.forts)) { f.dmg = 0; f.glow = 0.6; }
+    for (const f of Object.values(this.forts)) { f.dmg = 0; f.glow = 0.6; f.siegeMode = false; f.alert = 0; }
+    this.onFeedUpdate && this.onFeedUpdate(this.killFeed);
   }
 
   celebrate(side) {
@@ -641,9 +676,9 @@ export class Battle {
   }
 
   /** 永续强平独立天雷特效 + 地面紫纹裂隙 */
-  liquidate(side, usd) {
-    if (document.hidden || !this.W || !(usd > 0)) return;
-    const isLong = side === 'long', victim = isLong ? 'blue' : 'red';
+  liquidate(side, usd, opts = {}) {
+    if ((document.hidden && !opts.replay) || !this.W || !(usd > 0)) return;
+    const isLong = side === 'long', victim = isLong ? 'blue' : 'red', winner = isLong ? 'red' : 'blue';
     const ty = rand(this.laneTop, this.laneBot), fx = this.frontX(ty), base = victim === 'blue' ? this.baseL : this.baseR;
     const tx = lerp(fx + (victim === 'blue' ? -24 : 24), base, rand(0.12, 0.78));
     const lvl = usd >= this.th.heavy ? 3 : usd >= this.th.shell ? 2 : 1;
@@ -699,22 +734,89 @@ export class Battle {
       this.zoomY = clamp(ty / this.H, 0.35, 0.85);
     }
     this.texts.push({ x: tx, y: ty - 26, txt: `⚡ ${tr(isLong ? 'liqTagL' : 'liqTagS')} ${fmtUsd(usd)}`, side: victim, col: '#e9d5ff', lvl, life: 1.85, max: 1.85 });
+    if (usd >= this.th.heavy) this._spawnUnit(winner, 'titan', false);
+    if (!opts.noFeed && usd >= this.th.shell) {
+      this._pushFeed({
+        side: victim,
+        liqSide: side,
+        type: 'liq',
+        usd,
+        price: this.def.price,
+        label: tr('kfLiq', tr(isLong ? 'liqSideL' : 'liqSideS'), fmtUsd(usd)),
+      });
+    }
   }
 
-  // ---------- 士兵 ----------
+  // ---------- 士兵与多兵种 ----------
   _spawnSoldier(side, atBase = true) {
-    const y = rand(this.laneTop, this.laneBot);
+    this._spawnUnit(side, 'infantry', atBase);
+  }
+
+  _spawnUnit(side, kind = 'infantry', atBase = true) {
+    if (!this.W) return null;
     const base = side === 'blue' ? this.baseL : this.baseR;
+    const dir = side === 'blue' ? 1 : -1;
+    if (kind === 'cavalry') {
+      const n = this.soldiers.filter(s => !s.dead && s.side === side && s.kind === 'cavalry').length;
+      if (n >= 6) return null;
+      const y = rand(this.laneTop + 8, this.laneBot - 8);
+      const u = {
+        side, kind: 'cavalry', x: base + dir * rand(8, 22), y, d: rand(0.05, 0.25),
+        phase: rand(0, TAU), speed: rand(76, 98), cool: 0.5, ttl: 14, charged: false,
+        dead: false, dieT: 0, hit: 0, rot: 0, meleeT: 0, knockVx: 0,
+      };
+      this.soldiers.push(u);
+      return u;
+    }
+    if (kind === 'siege') {
+      const n = this.soldiers.filter(s => !s.dead && s.side === side && s.kind === 'siege').length;
+      if (n >= 2) return null;
+      const y = lerp(this.laneTop + 14, this.laneBot - 14, rand(0.2, 0.8));
+      const u = {
+        side, kind: 'siege', x: base + dir * rand(10, 24), y, d: 0.08,
+        phase: rand(0, TAU), speed: rand(26, 34), cool: 1.2, ramCool: 0.45, ramT: 0, ttl: 18,
+        dead: false, dieT: 0, hit: 0, rot: 0, meleeT: 0, knockVx: 0,
+      };
+      this.soldiers.push(u);
+      return u;
+    }
+    if (kind === 'titan') {
+      const cur = this.soldiers.find(s => !s.dead && s.side === side && s.kind === 'titan');
+      if (cur) {
+        cur.ttl = 15; cur.hit = 1;
+        this.rings.push({ x: cur.x, y: cur.y, r: 8, max: 46, life: 0.55, t: 0, col: colOf(side).glow });
+        return cur;
+      }
+      const y = lerp(this.laneTop, this.laneBot, rand(0.32, 0.68));
+      const fx = this.frontX(y);
+      const x = atBase ? base + dir * 24 : lerp(fx, base, 0.35);
+      const u = {
+        side, kind: 'titan', x, y, d: 0.14,
+        phase: rand(0, TAU), speed: rand(22, 28), cool: 0.9, ttl: 15,
+        dead: false, dieT: 0, hit: 0, rot: 0, meleeT: 0, knockVx: 0,
+      };
+      this.rings.push({ x: u.x, y: u.y, r: 10, max: 58, life: 0.7, t: 0, col: [253, 230, 138] });
+      this.soldiers.push(u);
+      return u;
+    }
+    const y = rand(this.laneTop, this.laneBot);
     const fx = this.frontX(y);
     const d = Math.pow(Math.random(), 1.7);
     const x = atBase ? base + (side === 'blue' ? rand(-10, 20) : rand(-20, 10)) : lerp(fx, base, d * 0.8 + 0.1);
-    this.soldiers.push({ side, x, y, d, phase: rand(0, TAU), speed: rand(28, 48), cool: rand(0.3, 2.5), dead: false, dieT: 0, hit: 0, rot: 0, banner: Math.random() < 0.09, garrison: Math.random() < 0.25 });
+    const u = {
+      side, kind: 'infantry', x, y, d, phase: rand(0, TAU), speed: rand(28, 48), cool: rand(0.3, 2.5),
+      ttl: Infinity, dead: false, dieT: 0, hit: 0, rot: 0, meleeT: 0, knockVx: 0,
+      banner: Math.random() < 0.09, garrison: Math.random() < 0.25,
+    };
+    this.soldiers.push(u);
+    return u;
   }
 
   _killNear(side, x, y, r) {
     let k = 0;
     for (const s of this.soldiers) {
       if (s.dead || s.side !== side) continue;
+      if ((s.kind === 'titan' || s.kind === 'siege') && r < 26) continue;
       const dx = s.x - x, dy = (s.y - y) * 1.6;
       if (dx * dx + dy * dy < r * r) { s.dead = true; s.dieT = 0; s.vx = Math.sign(dx || 1) * rand(30, 90); s.vy = -rand(40, 120); k++; }
     }
@@ -771,6 +873,7 @@ export class Battle {
     }
     cb.lastAt = this.t;
     cb.pop = 1;
+    if (cb.count >= 3 && cb.count % 2 === 1) this._spawnUnit(side, 'cavalry', true);
   }
 
   _volley(side) {
@@ -877,14 +980,21 @@ export class Battle {
       if (usd >= this.th.whale) {
         this._skyStrike(side, usd, 2);
         this._recordCombo(side, usd);
+        this._spawnUnit(side, 'titan', false);
+        this._pushFeed({
+          side, type: 'whale', usd, price: this.def.price,
+          label: tr('kfWhale', tr(side === 'blue' ? 'blue' : 'red'), fmtUsd(usd)),
+        });
         this.onWhale && this.onWhale(side, usd);
       } else if (usd >= this.th.heavy) {
         this._shell(side, usd, 'heavy');
         this._skyStrike(side, usd, 1);
         this._recordCombo(side, usd);
+        this._spawnUnit(side, 'siege', true);
       } else if (usd >= this.th.shell) {
         this._shell(side, usd, 'shell');
         this._recordCombo(side, usd);
+        this._spawnUnit(side, 'cavalry', true);
       } else {
         this.pending[side] += usd;
         if (usd >= this.th.small * 2) this._reinforce(side);
@@ -900,8 +1010,8 @@ export class Battle {
     }
   }
   _reinforce(side) {
-    const alive = this.soldiers.filter(s => !s.dead && s.side === side).length;
-    if (alive < this.N * 1.15) this._spawnSoldier(side, true);
+    const alive = this.soldiers.filter(s => !s.dead && s.side === side && (s.kind || 'infantry') === 'infantry').length;
+    if (alive < this.N * 1.15) this._spawnUnit(side, 'infantry', true);
   }
   _rifle(side) {
     const cands = this.soldiers.filter(s => !s.dead && s.side === side);
@@ -945,6 +1055,9 @@ export class Battle {
       this.frontU = clamp(lerp(this.frontU, targetU, 1 - Math.exp(-dt * 2.2)), leftWall + 0.015, rightWall - 0.015);
       this.frontTarget = clamp(0.5 + targetU * 0.5, 0.04, 0.96);
       this.front = clamp(0.5 + this.frontU * 0.5, 0.04, 0.96);
+      // 弹性战术运镜：价格偏离单边时把激战防线区拉向视野中心
+      const targetCam = clamp(-this.frontU * this.W * 0.16, -this.W * 0.16, this.W * 0.16);
+      this.camShift = lerp(this.camShift, targetCam, 1 - Math.exp(-dt * 1.8));
 
       for (const [, ln] of this.def.lines) {
         ln.wallStr = lerp(ln.wallStr, ln.wallTarget, 1 - Math.exp(-dt * 2.5));
@@ -961,8 +1074,22 @@ export class Battle {
         }
         ln.siege = lerp(ln.siege, clamp(siegeT, 0, 1), 1 - Math.exp(-dt * 4));
       }
+      // 持续围攻防线时自动派遣攻城车
+      for (const [att, ln] of [['blue', rightLine], ['red', leftLine]]) {
+        if (ln && ln.siege > 0.65) {
+          this._siegeAutoT[att] += dt;
+          if (this._siegeAutoT[att] >= 3.2) {
+            this._siegeAutoT[att] = 0;
+            const has = this.soldiers.some(s => !s.dead && s.side === att && s.kind === 'siege');
+            if (!has) this._spawnUnit(att, 'siege', true);
+          }
+        } else {
+          this._siegeAutoT[att] = Math.max(0, this._siegeAutoT[att] - dt);
+        }
+      }
     } else {
       this.front = lerp(this.front, this.frontTarget, 1 - Math.exp(-dt * 1.4));
+      this.camShift = lerp(this.camShift, 0, 1 - Math.exp(-dt * 2));
     }
     this.intensity *= Math.exp(-dt * 0.8);
     this.surgeT = this.surge ? Math.min(this.surgeT + dt * 2, 1) : Math.max(this.surgeT - dt * 1.5, 0);
@@ -978,11 +1105,33 @@ export class Battle {
       if (cb.count > 0 && this.t - cb.lastAt > 5) { cb.count = 0; cb.usd = 0; }
     }
 
-    // 城堡状态
+    // 城堡状态 & 三关破尽进入主堡攻城决战态
+    const blueBesieged = !!(this.def.anchor > 0 && this.def.lines.get(-3)?.state === 'captured');
+    const redBesieged = !!(this.def.anchor > 0 && this.def.lines.get(3)?.state === 'captured');
+    const besiegedMap = { blue: blueBesieged, red: redBesieged };
     for (const side of ['blue', 'red']) {
       const f = this.forts[side], share = side === 'blue' ? this.front : 1 - this.front;
-      f.update(dt, share, this.surge === side);
+      const bes = besiegedMap[side];
+      f.update(dt, share, this.surge === side, bes);
       if (f.dmg > 0.3 && Math.random() < dt * f.dmg * 2.5 * this.Q.pk) { const [x, y] = f.smokeSpot(); this._smoke(x, y, rand(6, 12) * f.k, rand(-6, 6), rand(-22, -10), rand(2, 3.5)); }
+      if (bes) {
+        this._ballistaT[side] += dt;
+        if (this._ballistaT[side] >= 1.6) {
+          this._ballistaT[side] = 0;
+          const [bx, by] = f.ballistaPos();
+          const enemy = side === 'blue' ? 'red' : 'blue';
+          const targets = this.soldiers.filter(s => !s.dead && s.side === enemy);
+          for (let b = 0; b < 2; b++) {
+            const tgt = targets.length ? targets[(Math.random() * targets.length) | 0] : null;
+            const ty = tgt ? tgt.y : rand(this.laneTop, this.laneBot);
+            const tx = tgt ? tgt.x : this.frontX(ty);
+            this._bullet(side, bx, by, tx, ty - 8 * this.scaleAt(ty), true);
+          }
+          this.parts.push({ type: 'glow', spr: 'gold', x: bx, y: by, vx: 0, vy: 0, life: 0.14, max: 0.14, size: 22 * f.k, add: true });
+        }
+      } else {
+        this._ballistaT[side] = 0;
+      }
     }
     if (this.surge) {
       this.lastSurge = this.surge;
@@ -993,13 +1142,13 @@ export class Battle {
     }
     this._processQueue();
 
-    // 兵力目标
+    // 兵力目标（仅统计常规步兵）
     const share = { blue: this.front, red: 1 - this.front };
     for (const side of ['blue', 'red']) {
-      const alive = this.soldiers.filter(s => !s.dead && s.side === side);
+      const alive = this.soldiers.filter(s => !s.dead && s.side === side && (s.kind || 'infantry') === 'infantry');
       const target = Math.round(this.N * (0.3 + 0.9 * share[side]));
       this.popAcc[side] += dt;
-      if (alive.length < target && this.popAcc[side] >= 0.16) { this.popAcc[side] = 0; this._spawnSoldier(side, this.soldiers.length > 0); }
+      if (alive.length < target && this.popAcc[side] >= 0.16) { this.popAcc[side] = 0; this._spawnUnit(side, 'infantry', this.soldiers.length > 0); }
       if (alive.length > target + 3 && this.popAcc[side] >= 0.5) {
         this.popAcc[side] = 0;
         let f = alive[0];
@@ -1009,15 +1158,130 @@ export class Battle {
       }
     }
 
-    // 士兵移动 / 射击
+    // 轻量 Boids 同阵营邻近排斥（消除单边堆叠）
+    for (const side of ['blue', 'red']) {
+      const inf = this.soldiers.filter(s => !s.dead && s.side === side && (s.kind || 'infantry') === 'infantry');
+      for (let i = 0; i < inf.length; i++) {
+        const a = inf[i];
+        for (let j = i + 1; j < inf.length; j++) {
+          const b = inf[j];
+          const dx = a.x - b.x, dy = a.y - b.y;
+          if (Math.abs(dx) < 15 && Math.abs(dy) < 9) {
+            const sx = (dx === 0 ? (i % 2 ? 1 : -1) : Math.sign(dx)) * (15 - Math.abs(dx)) * 1.15 * dt;
+            const sy = (dy === 0 ? (j % 2 ? 1 : -1) : Math.sign(dy)) * (9 - Math.abs(dy)) * 1.35 * dt;
+            a.x = clamp(a.x + sx, this.baseL + 10, this.baseR - 10);
+            b.x = clamp(b.x - sx, this.baseL + 10, this.baseR - 10);
+            a.y = clamp(a.y + sy, this.laneTop, this.laneBot);
+            b.y = clamp(b.y - sy, this.laneTop, this.laneBot);
+          }
+        }
+      }
+    }
+
+    // 多兵种移动 / 冲锋 / 撞墙 / 肉搏 / 射击
     for (const s of this.soldiers) {
       if (s.dead) {
-        s.dieT += dt; s.x += (s.vx || 0) * dt * Math.max(0, 1 - s.dieT * 2); s.rot = Math.min(s.dieT * 4, Math.PI / 2) * (s.side === 'blue' ? -1 : 1);
+        s.dieT += dt;
+        s.x += (s.vx || 0) * dt * Math.max(0, 1 - s.dieT * 2);
+        if ((s.kind || 'infantry') === 'infantry') s.rot = Math.min(s.dieT * 4, Math.PI / 2) * (s.side === 'blue' ? -1 : 1);
         continue;
       }
+      if (isFinite(s.ttl)) {
+        s.ttl -= dt;
+        if (s.ttl <= 0) {
+          s.dead = true; s.dieT = 1.4;
+          this.parts.push({ type: 'glow', spr: s.kind === 'titan' ? 'gold' : s.side, x: s.x, y: s.y - 24, vx: 0, vy: 0, life: 0.35, max: 0.35, size: s.kind === 'titan' ? 68 : 34, add: true });
+          continue;
+        }
+      }
+      if (s.knockVx) {
+        s.x = clamp(s.x + s.knockVx * dt, this.baseL + 12, this.baseR - 12);
+        s.knockVx *= Math.exp(-dt * 7);
+        if (Math.abs(s.knockVx) < 4) s.knockVx = 0;
+      }
+      if (s.meleeT > 0) s.meleeT = Math.max(0, s.meleeT - dt);
+      if (s.ramT > 0) s.ramT = Math.max(0, s.ramT - dt);
+      if (s.recoil) s.recoil = Math.max(0, s.recoil - dt);
+
+      const kind = s.kind || 'infantry';
       const blue = s.side === 'blue', dir = blue ? 1 : -1;
       const fx = this.frontX(s.y), base = blue ? this.baseL : this.baseR;
       const surging = this.surge === s.side;
+      const enemyLine = s.side === 'blue' ? rightLine : leftLine;
+
+      if (kind === 'cavalry') {
+        const tx = fx + dir * 24;
+        const dx = tx - s.x, sp = s.speed * (surging ? 1.45 : 1.15);
+        s.moving = Math.abs(dx) > 4;
+        s.x += clamp(dx, -sp * dt, sp * dt);
+        s.phase += dt * 15;
+        s.facing = s.moving ? Math.sign(dx) : dir;
+        if (s.moving && Math.random() < dt * 8 * this.Q.pk) {
+          this._smoke(s.x - dir * 12, s.y - 2, 5, -dir * rand(14, 30), rand(-12, -4), 0.55);
+        }
+        if (!s.charged && (s.x - fx) * dir >= -8) {
+          s.charged = true;
+          this.rings.push({ x: s.x, y: s.y, r: 5, max: 32, life: 0.4, t: 0, col: colOf(s.side).glow });
+          for (let i = 0; i < Math.round(7 * this.Q.pk); i++) {
+            this.parts.push({ type: 'spark', x: s.x + dir * 8, y: s.y - 12, vx: dir * rand(40, 140), vy: rand(-90, -10), life: 0.35, max: 0.35, col: '#fde68a', w: 1.6 });
+          }
+          if (enemyLine) enemyLine.hit = Math.min(1, enemyLine.hit + 0.35);
+          for (const e of this.soldiers) {
+            if (!e.dead && e.side !== s.side && (e.kind || 'infantry') === 'infantry' && Math.abs(e.x - s.x) < 42 && Math.abs(e.y - s.y) < 28) {
+              e.knockVx = dir * rand(90, 150);
+            }
+          }
+        }
+        continue;
+      }
+
+      if (kind === 'siege') {
+        let tx = fx - dir * 6;
+        if (enemyLine) {
+          const wx = this.defenseX(enemyLine.lvl * 0.25, s.y, enemyLine.owner === 'blue' ? 1 : -1);
+          if ((blue && wx < fx + 65) || (!blue && wx > fx - 65)) tx = wx - dir * 18;
+        }
+        const dx = tx - s.x;
+        s.moving = Math.abs(dx) > 6;
+        s.x += clamp(dx, -s.speed * dt, s.speed * dt);
+        s.phase += dt * (s.moving ? 6.5 : 8.5);
+        s.facing = dir;
+        if (!s.moving) {
+          s.ramCool -= dt;
+          if (s.ramCool <= 0) {
+            s.ramCool = 1.35;
+            s.ramT = 0.28;
+            if (enemyLine) enemyLine.hit = Math.min(1, enemyLine.hit + 0.55);
+            const hitX = s.x + dir * 24 * this.scaleAt(s.y);
+            this.rings.push({ x: hitX, y: s.y - 8, r: 4, max: 28, life: 0.38, t: 0, col: [253, 230, 138] });
+            for (let i = 0; i < Math.round(6 * this.Q.pk); i++) {
+              this.parts.push({ type: 'spark', x: hitX, y: s.y - 12, vx: -dir * rand(30, 100), vy: rand(-110, -20), life: 0.38, max: 0.38, col: '#fde68a', w: 1.7 });
+            }
+            this.shake = Math.max(this.shake, 2.2);
+          }
+        }
+        continue;
+      }
+
+      if (kind === 'titan') {
+        const tx = fx - dir * 34;
+        const dx = tx - s.x;
+        s.moving = Math.abs(dx) > 5;
+        s.x += clamp(dx, -s.speed * dt, s.speed * dt);
+        s.phase += dt * (s.moving ? 5.5 : 3);
+        s.facing = dir;
+        s.cool -= dt;
+        if (s.cool <= 0) {
+          s.cool = 1.1;
+          const sc = this.scaleAt(s.y);
+          const bx = s.x + dir * 24 * sc, by = s.y - 46 * sc;
+          const ty = clamp(s.y + rand(-24, 24), this.laneTop, this.laneBot);
+          this._bullet(s.side, bx, by, fx + dir * rand(40, 140), ty - 10 * this.scaleAt(ty), true);
+          this.parts.push({ type: 'glow', spr: 'gold', x: bx, y: by, vx: 0, vy: 0, life: 0.14, max: 0.14, size: 22 * sc, add: true });
+        }
+        continue;
+      }
+
       const depth = surging ? s.d * 0.35 : s.d;
       let tx = fx - dir * (12 + depth * Math.abs(fx - base) * 0.82);
       if (!surging && s.garrison && this.def.anchor > 0) {
@@ -1031,11 +1295,18 @@ export class Battle {
       s.x += clamp(dx, -sp * dt, sp * dt);
       s.phase += dt * (s.moving ? 11 : 2.5) * (surging ? 1.4 : 1);
       s.facing = s.moving ? Math.sign(dx) : dir;
-      if (s.recoil) s.recoil = Math.max(0, s.recoil - dt);
       const nearFront = Math.abs(s.x - fx) < 70;
       s.cool -= dt * (this.activity[s.side] || 0);
       if (!nearFront && s.cool < 0) s.cool = 0;
       if (nearFront && s.cool <= 0) { this._shoot(s); s.cool = rand(0.9, 1.8); }
+      // 最前线近战盾击火花
+      if (Math.abs(s.x - fx) < 26 && s.meleeT <= 0 && Math.random() < dt * (0.35 + (this.activity[s.side] || 0) * 1.4)) {
+        s.meleeT = 0.24;
+        const sc = this.scaleAt(s.y);
+        for (let i = 0; i < 2; i++) {
+          this.parts.push({ type: 'spark', x: fx, y: s.y - 13 * sc, vx: rand(-70, 70), vy: rand(-90, -15), life: 0.22, max: 0.22, col: Math.random() < 0.6 ? '#fef3c7' : '#ffffff', w: 1.5 });
+        }
+      }
     }
     this.soldiers = this.soldiers.filter(s => !s.dead || s.dieT < 2.2);
 
@@ -1198,6 +1469,7 @@ export class Battle {
       ctx.beginPath(); ctx.ellipse(s.x, s.y + 2, s.r, s.r * 0.32, 0, 0, TAU); ctx.fill();
     }
     this._drawFissures();
+    this._drawLiqZones();
     this._drawDefenseLinesGround();
 
     const rm = !!(RM && RM.matches);
@@ -1213,6 +1485,7 @@ export class Battle {
     this.soldiers.sort((a, b) => a.y - b.y);
     for (const s of this.soldiers) this._drawSoldier(s);
     this._drawDefenseLinesOverlay();
+    this._drawOrderWalls();
 
     // 烟雾
     for (const s of this.smoke) {
@@ -1490,24 +1763,42 @@ export class Battle {
 
   _drawSoldier(s) {
     const { ctx } = this; const c = colOf(s.side); const sc = this.scaleAt(s.y);
+    const kind = s.kind || 'infantry';
+    const spec = UNIT_SPEC[kind] || UNIT;
     const fade = s.dead ? clamp(1 - (s.dieT - 1.2), 0, 1) : 1;
     if (fade <= 0) return;
     const face = s.facing || (s.side === 'blue' ? 1 : -1);
-    const set = this.units[s.side] || this.units.blue;
+    const sidePack = this.units[s.side] || this.units.blue;
+    const set = sidePack[kind] || sidePack;
     const moving = s.moving && !s.dead;
-    const spr = moving ? set.walk[((Math.floor(s.phase / TAU * UNIT.FRAMES) % UNIT.FRAMES) + UNIT.FRAMES) % UNIT.FRAMES] : set.idle;
+    const frames = spec.FRAMES || UNIT.FRAMES;
+    const spr = moving ? set.walk[((Math.floor(s.phase / TAU * frames) % frames) + frames) % frames] : set.idle;
+
+    if (kind === 'titan' && !s.dead) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const pulse = 0.72 + 0.28 * Math.sin(this.t * 4);
+      ctx.globalAlpha = fade * 0.42 * pulse;
+      ctx.drawImage(this.sprites.gold, s.x - 44 * sc, s.y - 24 * sc, 88 * sc, 48 * sc);
+      ctx.strokeStyle = `rgba(253,230,138,${0.55 * fade * pulse})`;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.ellipse(s.x, s.y, 26 * sc, 8 * sc, 0, 0, TAU); ctx.stroke();
+      ctx.restore();
+    }
+
     ctx.save(); ctx.globalAlpha = fade;
     ctx.translate(s.x, s.y);
-    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.ellipse(0, 0, 9 * sc, 2.8 * sc, 0, 0, TAU); ctx.fill();
+    const shW = kind === 'titan' ? 24 : kind === 'siege' ? 22 : kind === 'cavalry' ? 18 : 9;
+    ctx.fillStyle = 'rgba(0,0,0,0.52)'; ctx.beginPath(); ctx.ellipse(0, 0, shW * sc, Math.max(2.8, shW * 0.3) * sc, 0, 0, TAU); ctx.fill();
     ctx.scale(sc * face, sc);
     if (s.dead) { ctx.rotate(-Math.abs(s.rot)); ctx.globalAlpha = fade * 0.85; }
     const bob = s.dead ? 0 : (moving ? 0 : Math.sin(s.phase) * 0.45);
-    const rc = s.recoil ? s.recoil * 10 : 0;
+    const rc = (s.recoil ? s.recoil * 10 : 0) - (s.meleeT ? Math.sin(s.meleeT / 0.24 * Math.PI) * 5 : 0) - (s.ramT ? Math.sin(s.ramT / 0.28 * Math.PI) * 8 : 0);
     ctx.translate(-rc * 0.25, -bob);
-    if (s.banner && !s.dead) drawStandard(ctx, c, this.t, s.phase * 0.3, s.side === 'blue');
-    ctx.drawImage(spr, -UNIT.OX, -UNIT.OY, UNIT.W, UNIT.H);
+    if (s.banner && !s.dead && kind === 'infantry') drawStandard(ctx, c, this.t, s.phase * 0.3, s.side === 'blue');
+    ctx.drawImage(spr, -spec.OX, -spec.OY, spec.W, spec.H);
     ctx.restore();
-    if (this.surge === s.side && !s.dead) {
+    if (this.surge === s.side && !s.dead && kind === 'infantry') {
       ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.4 * this.surgeT;
       ctx.drawImage(this.sprites[s.side], s.x - 15 * sc, s.y - 36 * sc, 30 * sc, 42 * sc);
       ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
@@ -1571,15 +1862,15 @@ export class Battle {
     const activeBlue = this._activeWallLine('blue');
 
     ctx.save();
-    // 0% 中轴基准线（楚河汉界）
-    const cx = this.W * 0.5;
+    // 0% 中轴基准线（随弹性镜头同步透视偏移）
+    const midPts = this._lineCurve(0, 0, y0, y1, 8);
     ctx.strokeStyle = 'rgba(4,6,14,0.5)';
     ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.moveTo(cx, y0); ctx.lineTo(cx, y1); ctx.stroke();
+    ctx.beginPath(); midPts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
     ctx.strokeStyle = 'rgba(253,230,138,0.28)';
     ctx.lineWidth = 1.4;
     ctx.setLineDash([6, 5]);
-    ctx.beginPath(); ctx.moveTo(cx, y0); ctx.lineTo(cx, y1); ctx.stroke();
+    ctx.beginPath(); midPts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
     ctx.setLineDash([]);
 
     for (const lvl of [-3, -2, -1, 1, 2, 3]) {
@@ -1862,8 +2153,8 @@ export class Battle {
       ctx.fillText(pxStr, bx + bw / 2, by + bh - 6.5);
     }
 
-    // 0% 基准中轴碑（错层置于地平线上方，避免与 ±1% 标牌碰撞）
-    const cx = this.W * 0.5;
+    // 0% 基准中轴碑（随弹性镜头同步平移，错层置于地平线上方）
+    const cx = this.defenseX(0, this.horizon, 0);
     const cy = this.horizon - (ultraNarrow ? 15 : 13);
     const baseTxt = this.W >= 520 ? `0% · ${tr(this.def.anchorType === 'daily' ? 'defBase' : 'defBase24')}` : '0%';
     const basePx = '$' + Math.round(this.def.anchor).toLocaleString('en-US');
@@ -1891,6 +2182,276 @@ export class Battle {
     ctx.fillStyle = '#e6ebff';
     ctx.fillText(basePx, cx, cy + (ultraNarrow ? 5 : 6));
     ctx.restore();
+  }
+
+  // ---------- Phase 3: 盘口巨鲸墙、清算磁吸带、微操特效与互动回放 ----------
+  _priceToU(price) {
+    if (!(this.def.anchor > 0) || !(this.def.step > 0) || !(price > 0)) return null;
+    const pct = (price / this.def.anchor - 1) * 100;
+    return pct / (this.def.step * 4);
+  }
+
+  setOrderWalls(walls = []) {
+    this.orderWalls = Array.isArray(walls) ? walls.slice(0, 6) : [];
+  }
+
+  setLiqZones(zones = []) {
+    this.liqZones = Array.isArray(zones) ? zones.slice(0, 6) : [];
+  }
+
+  _drawLiqZones() {
+    if (!this.liqZones.length || !(this.def.anchor > 0)) return;
+    const { ctx } = this;
+    const y0 = this.laneTop - 6, y1 = this.laneBot + 4;
+    ctx.save();
+    for (const z of this.liqZones) {
+      const u = this._priceToU(z.price);
+      if (u == null || Math.abs(u) > 0.92) continue;
+      const pts = this._lineCurve(u, 0, y0, y1, 8);
+      const a = clamp(0.18 + (z.strength || 0.5) * 0.24, 0.16, 0.45);
+      ctx.strokeStyle = z.side === 'long' ? `rgba(192,132,252,${a})` : `rgba(244,114,182,${a})`;
+      ctx.lineWidth = z.leverage === '50x' ? 7 : 4.5;
+      ctx.setLineDash([4, 6]);
+      ctx.beginPath();
+      pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const [bx, by] = pts[1] || pts[0];
+      ctx.font = '700 9px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(233,213,255,0.82)';
+      ctx.fillText(`⚡${z.leverage}`, bx, by + 6);
+    }
+    ctx.restore();
+  }
+
+  _drawOrderWalls() {
+    if (!this.orderWalls.length || !(this.def.anchor > 0)) return;
+    const { ctx, t } = this;
+    const y0 = this.laneTop + 4, y1 = this.laneBot - 4;
+    const placedTags = [];
+    ctx.save();
+    for (const w of this.orderWalls) {
+      const u = this._priceToU(w.price);
+      if (u == null || Math.abs(u) > 0.9) continue;
+      const bowDir = w.side === 'blue' ? 1 : -1;
+      const pts = this._lineCurve(u, bowDir, y0, y1, 8);
+      const str = clamp((Math.log10((w.usd || 300000) + 1) - 5.3) / 1.7, 0.25, 1);
+      const h = (14 + str * 14);
+      const col = w.side === 'blue' ? '96,165,250' : '248,113,113';
+      const pulse = 0.8 + 0.2 * Math.sin(t * 3 + w.price * 0.01);
+
+      // 金晶壁垒棱柱体
+      ctx.fillStyle = `rgba(251,191,36,${0.12 + str * 0.14})`;
+      ctx.beginPath();
+      pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      for (let i = pts.length - 1; i >= 0; i--) {
+        const [x, y] = pts[i];
+        ctx.lineTo(x, y - h * this.scaleAt(y));
+      }
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = `rgba(253,230,138,${(0.45 + str * 0.4) * pulse})`;
+      ctx.lineWidth = 1.3 + str * 1.4;
+      ctx.beginPath();
+      pts.forEach(([x, y], i) => {
+        const yy = y - h * this.scaleAt(y);
+        if (i === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+      });
+      ctx.stroke();
+
+      ctx.strokeStyle = `rgba(${col},${0.45 + str * 0.3})`;
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.stroke();
+
+      // 顶部微标牌（置于战壕上沿内侧，避开地平线百分比界碑）
+      if (this.W >= 600) {
+        const tx = pts[0][0];
+        let ty = y0 + 10;
+        for (const px of placedTags) {
+          if (Math.abs(px[0] - tx) < 92 && Math.abs(px[1] - ty) < 16) ty += 17;
+        }
+        if (ty < y1 - 24) {
+          placedTags.push([tx, ty]);
+          const lbl = `🧱 $${Math.round(w.price).toLocaleString('en-US')} · ${fmtUsd(w.usd)}`;
+          ctx.font = '700 9.5px "JetBrains Mono", -apple-system, sans-serif';
+          const tw = ctx.measureText(lbl).width + 10;
+          const bx = clamp(tx - tw / 2, 8, this.W - tw - 8);
+          ctx.fillStyle = 'rgba(10,14,28,0.88)';
+          ctx.strokeStyle = w.side === 'blue' ? 'rgba(96,165,250,0.65)' : 'rgba(248,113,113,0.65)';
+          ctx.lineWidth = 1;
+          this._roundRect(ctx, bx, ty - 7.5, tw, 15, 4);
+          ctx.fill(); ctx.stroke();
+          ctx.fillStyle = '#fde68a';
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText(lbl, bx + tw / 2, ty + 0.3);
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  triggerWallEvent(type, { side, price, usd, noFeed = false } = {}) {
+    if (!this.W || !(usd > 0)) return;
+    const u = clamp(this._priceToU(price) ?? (side === 'blue' ? -0.35 : 0.35), -0.88, 0.88);
+    const midY = (this.laneTop + this.laneBot) * 0.5;
+    const mx = this.defenseX(u, midY, side === 'blue' ? 1 : -1);
+    const c = colOf(side);
+    if (type === 'spoof') {
+      for (let i = 0; i < Math.round(16 * this.Q.pk); i++) {
+        const py = rand(this.laneTop + 10, this.laneBot - 10);
+        const px = this.defenseX(u, py, side === 'blue' ? 1 : -1);
+        this.parts.push({
+          type: 'spark', x: px, y: py,
+          vx: rand(-55, 55), vy: rand(-130, -45),
+          life: rand(0.45, 0.85), max: 0.85,
+          col: c.light, w: rand(1.3, 2.4),
+        });
+      }
+      this.texts.push({
+        x: mx, y: this.laneTop + 26, vx: 0,
+        txt: `💨 ${tr('wallSpoofTag')} ${fmtUsd(usd)}`,
+        side, col: '#cbd5f5', lvl: 2, life: 2.0, max: 2.0,
+      });
+      if (!noFeed) {
+        this._pushFeed({ side, type: 'spoof', price, usd, label: tr('kfSpoof', fmtUsd(usd)) });
+      }
+    } else if (type === 'iceberg') {
+      this.rings.push({ x: mx, y: midY, r: 8, max: 64, life: 0.65, t: 0, col: [253, 230, 138] });
+      this.parts.push({ type: 'glow', spr: 'gold', x: mx, y: midY, vx: 0, vy: 0, life: 0.45, max: 0.45, size: 92, add: true, grow: 1.2 });
+      for (let i = 0; i < Math.round(12 * this.Q.pk); i++) {
+        const a = rand(0, TAU), sp = rand(40, 130);
+        this.parts.push({ type: 'spark', x: mx, y: midY, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 0.5, max: 0.5, col: '#fde68a', w: 1.8 });
+      }
+      this.texts.push({
+        x: mx, y: this.laneTop + 26, vx: 0,
+        txt: `🛡️ ${tr('wallIcebergTag')} ${fmtUsd(usd)}`,
+        side, col: '#fde68a', lvl: 2, life: 2.1, max: 2.1,
+      });
+      if (!noFeed) {
+        this._pushFeed({ side, type: 'iceberg', price, usd, label: tr('kfIceberg', fmtUsd(usd)) });
+      }
+    }
+  }
+
+  _pushFeed(item) {
+    const ev = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      ts: Date.now(),
+      ...item,
+    };
+    this.killFeed.unshift(ev);
+    if (this.killFeed.length > 5) this.killFeed.length = 5;
+    this.onFeedUpdate && this.onFeedUpdate(this.killFeed);
+  }
+
+  replayEvent(ev) {
+    if (!ev || !this.W) return;
+    if (ev.type === 'whale') {
+      this._skyStrike(ev.side, ev.usd || this.th.whale, 2);
+      this._spawnUnit(ev.side, 'titan', false);
+      this.onDemoSfx && this.onDemoSfx('whale', ev.side);
+    } else if (ev.type === 'liq') {
+      this.liquidate(ev.liqSide || (ev.side === 'blue' ? 'long' : 'short'), ev.usd || this.th.heavy, { noFeed: true, replay: true });
+      this.onDemoSfx && this.onDemoSfx('liq', ev.side);
+    } else if (ev.type === 'breach' || ev.type === 'recap') {
+      const ln = this.def.lines.get(ev.lvl);
+      if (ln) this._triggerLineEvent(ln, ev.side, !!ev.recaptured, false);
+      this.onDemoSfx && this.onDemoSfx('breach', ev.side, !!ev.recaptured);
+    } else if (ev.type === 'spoof' || ev.type === 'iceberg') {
+      this.triggerWallEvent(ev.type, { side: ev.side, price: ev.price, usd: ev.usd, noFeed: true });
+    }
+  }
+
+  triggerDemo(kind) {
+    if (!this.W) return;
+    if (kind === 'whale_blue' || kind === 'whale_red') {
+      const side = kind === 'whale_blue' ? 'blue' : 'red';
+      const usd = 1850000;
+      this._skyStrike(side, usd, 2);
+      this._recordCombo(side, usd);
+      this._spawnUnit(side, 'titan', false);
+      this._spawnUnit(side, 'cavalry', true);
+      this._spawnUnit(side, 'cavalry', true);
+      this._pushFeed({ side, type: 'whale', usd, price: this.def.price, label: tr('kfWhale', tr(side), fmtUsd(usd)) });
+      this.onDemoSfx && this.onDemoSfx('whale', side);
+    } else if (kind === 'liq_cascade') {
+      const victimSide = this.front < 0.5 ? 'long' : 'short';
+      const winner = victimSide === 'long' ? 'red' : 'blue';
+      [85000, 140000, 290000, 460000].forEach((amt, idx) => {
+        setTimeout(() => {
+          this.liquidate(victimSide, amt, { noFeed: idx !== 3, replay: true });
+          this.onDemoSfx && this.onDemoSfx('liq', winner);
+        }, idx * 170);
+      });
+    } else if (kind === 'siege') {
+      const att = this.front >= 0.5 ? 'blue' : 'red';
+      this._spawnUnit(att, 'siege', true);
+      this._spawnUnit(att, 'siege', true);
+      for (let i = 0; i < 3; i++) this._spawnUnit(att, 'cavalry', true);
+      this._shell(att, 360000, 'heavy');
+      this._shell(att, 180000, 'shell');
+      this._volley(att);
+      this.onDemoSfx && this.onDemoSfx('surge', att);
+    }
+  }
+
+  _emitHover() {
+    if (!this.onHover || !this._hoverPos || !this.W) return;
+    const { x, y } = this._hoverPos;
+    let hit = null;
+
+    // 1. 城堡能量护盾侦察
+    for (const side of ['blue', 'red']) {
+      const f = this.forts[side];
+      if (!f || !f.body) continue;
+      const sx = f.X(52 * f.k), sy = f.gy - 52 * f.k;
+      if (Math.abs(x - sx) < 34 * f.k && Math.abs(y - sy) < 68 * f.k) {
+        hit = { kind: 'shield', side, str: this.shields[side].str, usd: this.shields[side].prevUsd, alert: f.alert, x, y };
+        break;
+      }
+    }
+
+    // 2. 真实巨鲸挂单墙侦察
+    if (!hit && this.def.anchor > 0 && y >= this.horizon && y <= this.H) {
+      for (const w of this.orderWalls) {
+        const u = this._priceToU(w.price);
+        if (u == null || Math.abs(u) > 0.9) continue;
+        const wx = this.defenseX(u, clamp(y, this.laneTop, this.laneBot), w.side === 'blue' ? 1 : -1);
+        if (Math.abs(x - wx) < 16) {
+          hit = { kind: 'wall', side: w.side, price: w.price, usd: w.usd, distPct: w.distPct, x, y };
+          break;
+        }
+      }
+    }
+
+    // 3. 价格防线侦察
+    if (!hit && this.def.anchor > 0 && y >= this.horizon && y <= this.H) {
+      let bestDist = 16;
+      for (const lvl of [-3, -2, -1, 1, 2, 3]) {
+        const ln = this.def.lines.get(lvl);
+        if (!ln) continue;
+        const wx = this.defenseX(lvl * 0.25, clamp(y, this.laneTop, this.laneBot), ln.owner === 'blue' ? 1 : -1);
+        const d = Math.abs(x - wx);
+        if (d < bestDist) {
+          bestDist = d;
+          const pct = +(lvl * this.def.step).toFixed(1);
+          const price = this.def.anchor * (1 + pct / 100);
+          hit = { kind: 'line', lvl, pct, price, state: ln.state, owner: ln.owner, wallUsd: ln.wallUsd, breachCount: ln.breachCount || 0, x, y };
+        }
+      }
+    }
+
+    if (!hit) {
+      if (this._lastHoverKey) { this._lastHoverKey = ''; this.onHover(null); }
+      return;
+    }
+    const key = `${hit.kind}-${hit.side || hit.lvl || ''}-${Math.round(hit.price || 0)}`;
+    this._lastHoverKey = key;
+    this.onHover(hit);
   }
 }
 

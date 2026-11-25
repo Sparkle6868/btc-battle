@@ -4,8 +4,14 @@ const TAU = Math.PI * 2;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const rnd = (a, b) => a + Math.random() * (b - a);
 
-// 士兵精灵：单位坐标（与旧版士兵同尺度，身高约 34），R 倍分辨率；原点在脚底中心，朝右
+// 士兵精灵：单位坐标，R 倍分辨率；原点在脚底中心，朝右
 export const UNIT = { R: 3, W: 48, H: 54, OX: 22, OY: 49, FRAMES: 8 };
+export const UNIT_SPEC = {
+  infantry: UNIT,
+  cavalry: { R: 2.5, W: 70, H: 60, OX: 35, OY: 54, FRAMES: 8 },
+  siege: { R: 2.5, W: 78, H: 60, OX: 38, OY: 54, FRAMES: 6 },
+  titan: { R: 2, W: 112, H: 126, OX: 56, OY: 118, FRAMES: 6 },
+};
 
 function chevron(x, cx, cy, s, up) {
   x.beginPath();
@@ -72,16 +78,384 @@ function drawUnit(x, side, c, ph, moving) {
   if (blue) { x.strokeStyle = '#3a3226'; x.lineWidth = 2.4; x.beginPath(); x.moveTo(hx + 1.6, hy - 3); x.lineTo(hx + 3.6, hy - 4.4); x.stroke(); x.strokeStyle = '#f1e6c8'; x.lineWidth = 1.9; x.beginPath(); x.moveTo(hx + 2.6, hy - 3.8); x.quadraticCurveTo(hx + 8.5, hy - 5, hx + 6, hy - 10); x.stroke(); }
 }
 
-/** 预渲染两军士兵精灵：{ blue: { walk: [8], idle }, red: {...} } */
+function drawCavalry(x, side, c, ph, moving) {
+  const blue = side === 'blue';
+  const stride = moving ? Math.sin(ph) : 0;
+  const bob = moving ? Math.abs(Math.cos(ph)) * 1.8 : 0;
+  x.lineCap = 'round'; x.lineJoin = 'round';
+
+  // 后腿（远侧）
+  const leg = (bx, phase, front) => {
+    const s = moving ? Math.sin(phase) : 0;
+    const lift = moving ? Math.max(0, Math.cos(phase)) * 2.5 : 0;
+    x.strokeStyle = front ? (blue ? '#334155' : '#3a2220') : (blue ? '#182032' : '#211312');
+    x.lineWidth = blue ? 3.2 : 4.2;
+    x.beginPath();
+    x.moveTo(bx, -13 - bob);
+    x.lineTo(bx + s * 4.5, -6.5 - lift);
+    x.lineTo(bx + s * 7.5, -1.2 - lift);
+    x.stroke();
+    x.fillStyle = '#090c13';
+    x.beginPath();
+    x.ellipse(bx + s * 7.5 + 1.2, -0.9 - lift, blue ? 2.4 : 3.2, 1.3, 0, 0, TAU);
+    x.fill();
+  };
+  leg(-14, ph + 1.8, false);
+  leg(11, ph - 1.2, false);
+
+  // 坐骑躯干（蓝=重甲战牛，红=披甲战熊）
+  x.save();
+  x.translate(0, -bob);
+  const bodyG = x.createLinearGradient(-20, -28, 18, -10);
+  if (blue) {
+    bodyG.addColorStop(0, '#475569'); bodyG.addColorStop(0.5, '#1e3a8a'); bodyG.addColorStop(1, '#0f172a');
+  } else {
+    bodyG.addColorStop(0, '#5c2b22'); bodyG.addColorStop(0.5, '#3b1815'); bodyG.addColorStop(1, '#1a0a0a');
+  }
+  x.fillStyle = bodyG;
+  x.beginPath();
+  x.ellipse(-1, -17, blue ? 18 : 19.5, blue ? 8.8 : 9.8, -0.05, 0, TAU);
+  x.fill();
+
+  // 战甲披挂（马衣/熊甲）
+  x.fillStyle = c.armor;
+  x.beginPath();
+  x.moveTo(-16, -21);
+  x.quadraticCurveTo(0, -24, 15, -19);
+  x.lineTo(13, -10.5);
+  x.quadraticCurveTo(0, -8.5, -15, -11.5);
+  x.closePath();
+  x.fill();
+  x.strokeStyle = c.gold;
+  x.lineWidth = 1;
+  x.stroke();
+  x.fillStyle = 'rgba(255,255,255,.85)';
+  chevron(x, 4, -15.5, 2.4, blue);
+
+  // 坐骑头部
+  if (blue) {
+    // 牛首 + 金银双角
+    x.fillStyle = '#1e293b';
+    x.beginPath();
+    x.moveTo(11, -24); x.lineTo(24, -22); x.lineTo(25, -14.5); x.lineTo(14, -13);
+    x.closePath(); x.fill();
+    x.strokeStyle = c.main; x.lineWidth = 1; x.stroke();
+    // 发光牛眼
+    x.fillStyle = c.visor; x.fillRect(18.5, -20, 3, 1.3);
+    // 弯曲巨角
+    x.strokeStyle = '#fef3c7'; x.lineWidth = 2.4;
+    x.beginPath(); x.moveTo(17, -23.5); x.quadraticCurveTo(25, -28, 28.5, -32.5); x.stroke();
+    x.strokeStyle = '#b8a374'; x.lineWidth = 1.9;
+    x.beginPath(); x.moveTo(14.5, -24); x.quadraticCurveTo(21, -29, 23.5, -33.5); x.stroke();
+  } else {
+    // 熊首 + 护面铁箍 + 利齿
+    x.fillStyle = '#4a211b';
+    x.beginPath();
+    x.ellipse(18, -20.5, 7.8, 6.4, 0.1, 0, TAU);
+    x.fill();
+    x.fillStyle = '#2e1210';
+    x.beginPath(); x.arc(14.5, -26, 2.2, 0, TAU); x.fill(); // 熊耳
+    x.fillStyle = c.visor; x.fillRect(19.5, -22.2, 3.2, 1.3); // 怒目
+    x.fillStyle = '#e2e8f0';
+    x.beginPath(); x.moveTo(23, -17.5); x.lineTo(24.5, -15); x.lineTo(21.5, -17); x.closePath(); x.fill(); // 獠牙
+    x.strokeStyle = c.gold; x.lineWidth = 0.9;
+    x.beginPath(); x.moveTo(13, -23); x.lineTo(21, -23.5); x.stroke();
+  }
+
+  // 骑手披风（随奔跑飘动）
+  const cg = x.createLinearGradient(-4, -38, -20, -18);
+  cg.addColorStop(0, c.cape); cg.addColorStop(1, c.capeDk);
+  x.fillStyle = cg;
+  x.beginPath();
+  x.moveTo(-4, -36);
+  x.quadraticCurveTo(-15 - stride * 2, -31, -24 - stride * 2.5, -20);
+  x.lineTo(-16 - stride, -17.5);
+  x.quadraticCurveTo(-9, -23, -4, -24);
+  x.closePath();
+  x.fill();
+
+  // 骑手躯干与头盔
+  const rg = x.createLinearGradient(-8, -38, 4, -23);
+  rg.addColorStop(0, c.steelHi); rg.addColorStop(0.5, c.armor); rg.addColorStop(1, c.dark);
+  x.fillStyle = rg;
+  x.beginPath();
+  x.roundRect ? x.roundRect(-7, -36.5, 10, 14, 2.5) : x.rect(-7, -36.5, 10, 14);
+  x.fill();
+  // 骑手头盔
+  x.fillStyle = '#2d3446';
+  x.beginPath(); x.arc(-1.5, -40.5, 4.6, 0, TAU); x.fill();
+  x.fillStyle = c.visor; x.fillRect(-0.5, -41.2, 4, 1.2);
+  if (blue) {
+    x.strokeStyle = '#f1e6c8'; x.lineWidth = 1.7;
+    x.beginPath(); x.moveTo(0, -43.5); x.quadraticCurveTo(5, -45, 3.5, -49.5); x.stroke();
+  } else {
+    x.fillStyle = c.main;
+    x.beginPath(); x.moveTo(0, -45); x.quadraticCurveTo(-7, -48, -11, -43); x.lineTo(-4, -41.5); x.closePath(); x.fill();
+  }
+
+  // 骑手武器：蓝军长枪突刺 / 红军战斧劈砍
+  if (blue) {
+    x.fillStyle = '#64748b';
+    x.fillRect(-6, -30.5, 32, 2.1);
+    x.fillStyle = c.gold;
+    x.beginPath(); x.moveTo(1, -33.5); x.lineTo(6, -29.5); x.lineTo(1, -25.5); x.closePath(); x.fill();
+    x.save(); x.shadowColor = c.light; x.shadowBlur = 5; x.fillStyle = '#e0f2fe';
+    x.beginPath(); x.moveTo(26, -32.2); x.lineTo(34, -29.5); x.lineTo(26, -26.8); x.closePath(); x.fill();
+    x.restore();
+  } else {
+    x.strokeStyle = '#78716c'; x.lineWidth = 2.4;
+    x.beginPath(); x.moveTo(-2, -29); x.lineTo(18, -42); x.stroke();
+    x.save(); x.shadowColor = c.light; x.shadowBlur = 5; x.fillStyle = c.light;
+    x.beginPath(); x.moveTo(14, -45); x.quadraticCurveTo(25, -44, 24, -34); x.quadraticCurveTo(18, -37, 13, -39); x.closePath(); x.fill();
+    x.restore();
+  }
+  x.restore();
+
+  // 前腿（近侧）
+  leg(-11, ph, true);
+  leg(13, ph + Math.PI, true);
+}
+
+function drawSiege(x, side, c, ph, moving) {
+  const blue = side === 'blue';
+  const thrust = Math.sin(ph) * (moving ? 3.5 : 5);
+  x.lineCap = 'round'; x.lineJoin = 'round';
+
+  // 顶棚与攻城木框架
+  x.fillStyle = '#1a1512';
+  x.strokeStyle = '#3f342a';
+  x.lineWidth = 1.6;
+  x.beginPath();
+  x.moveTo(-28, -11); x.lineTo(-22, -37); x.lineTo(16, -33); x.lineTo(22, -11);
+  x.closePath();
+  x.fill(); x.stroke();
+
+  // 倾斜顶甲与护盾板
+  const roofG = x.createLinearGradient(-24, -39, 18, -28);
+  roofG.addColorStop(0, '#334155'); roofG.addColorStop(1, '#0f172a');
+  x.fillStyle = roofG;
+  x.beginPath();
+  x.moveTo(-26, -36); x.lineTo(-20, -42); x.lineTo(18, -37); x.lineTo(19, -31);
+  x.closePath();
+  x.fill();
+  x.strokeStyle = c.gold; x.lineWidth = 1; x.stroke();
+
+  // 侧板徽记
+  x.fillStyle = c.dark;
+  x.fillRect(-16, -29, 26, 14);
+  x.strokeStyle = c.main; x.lineWidth = 0.9; x.strokeRect(-16, -29, 26, 14);
+  x.fillStyle = 'rgba(255,255,255,.85)';
+  chevron(x, -3, -22, 3.2, blue);
+
+  // 悬吊的巨型符文撞锤（往复冲击）
+  x.strokeStyle = '#94a3b8'; x.lineWidth = 1.4;
+  x.beginPath();
+  x.moveTo(-12, -33); x.lineTo(-12 + thrust, -20);
+  x.moveTo(8, -32); x.lineTo(8 + thrust, -20);
+  x.stroke();
+
+  x.save();
+  x.translate(thrust, 0);
+  const logG = x.createLinearGradient(0, -23, 0, -14);
+  logG.addColorStop(0, '#574332'); logG.addColorStop(1, '#291e16');
+  x.fillStyle = logG;
+  x.fillRect(-20, -23, 42, 8);
+  // 金属发光撞锤头
+  x.save();
+  x.shadowColor = c.light; x.shadowBlur = 7;
+  x.fillStyle = c.main;
+  x.beginPath();
+  x.moveTo(20, -25.5); x.lineTo(34, -21); x.lineTo(34, -17); x.lineTo(20, -12.5);
+  x.closePath();
+  x.fill();
+  x.strokeStyle = c.gold; x.lineWidth = 1.1; x.stroke();
+  x.fillStyle = '#fff';
+  x.fillRect(28, -20.5, 5, 3);
+  x.restore();
+  x.restore();
+
+  // 双轮（带旋转辐条）
+  for (const wx of [-15, 11]) {
+    const wy = -7.5, wr = 7.2;
+    x.fillStyle = '#0c101a';
+    x.beginPath(); x.arc(wx, wy, wr, 0, TAU); x.fill();
+    x.strokeStyle = '#64748b'; x.lineWidth = 2;
+    x.beginPath(); x.arc(wx, wy, wr, 0, TAU); x.stroke();
+    x.strokeStyle = c.gold; x.lineWidth = 1;
+    for (let k = 0; k < 4; k++) {
+      const a = ph + k * Math.PI * 0.25;
+      x.beginPath();
+      x.moveTo(wx - Math.cos(a) * wr * 0.85, wy - Math.sin(a) * wr * 0.85);
+      x.lineTo(wx + Math.cos(a) * wr * 0.85, wy + Math.sin(a) * wr * 0.85);
+      x.stroke();
+    }
+    x.fillStyle = c.gold; x.beginPath(); x.arc(wx, wy, 2.2, 0, TAU); x.fill();
+  }
+}
+
+function drawTitan(x, side, c, ph, moving) {
+  const blue = side === 'blue';
+  const walk = moving ? Math.sin(ph) : 0;
+  const hover = Math.sin(ph * 2) * 1.8;
+  x.lineCap = 'round'; x.lineJoin = 'round';
+
+  // 圣像光辉背晕
+  const aura = x.createRadialGradient(0, -52, 8, 0, -52, 52);
+  aura.addColorStop(0, `rgba(${c.glow.join(',')},0.35)`);
+  aura.addColorStop(0.65, `rgba(${c.glow.join(',')},0.12)`);
+  aura.addColorStop(1, `rgba(${c.glow.join(',')},0)`);
+  x.fillStyle = aura;
+  x.beginPath(); x.arc(0, -52, 52, 0, TAU); x.fill();
+
+  // 巨型飘动战袍
+  const cg = x.createLinearGradient(-10, -76, -34, -10);
+  cg.addColorStop(0, c.cape); cg.addColorStop(1, 'rgba(10,14,28,0.45)');
+  x.fillStyle = cg;
+  x.beginPath();
+  x.moveTo(-6, -74);
+  x.quadraticCurveTo(-28 - walk * 4, -50, -34 - walk * 5, -12);
+  x.lineTo(-16 - walk * 2, -8);
+  x.quadraticCurveTo(-12, -36, -6, -42);
+  x.closePath();
+  x.fill();
+
+  // 巨型双腿
+  const tLeg = (dx, front) => {
+    x.strokeStyle = front ? '#475569' : '#1e293b';
+    x.lineWidth = 8.5;
+    x.beginPath();
+    x.moveTo(front ? 2 : -3, -34);
+    x.lineTo(dx * 0.5, -17);
+    x.lineTo(dx, -2);
+    x.stroke();
+    x.fillStyle = c.main;
+    x.fillRect(dx * 0.5 - 3.5, -21, 7, 4);
+    x.fillStyle = '#090d16';
+    x.beginPath(); x.ellipse(dx + 2.5, -1.5, 6.2, 2.8, 0, 0, TAU); x.fill();
+  };
+  tLeg(-walk * 9, false);
+  tLeg(walk * 9, true);
+
+  x.save();
+  x.translate(0, hover);
+
+  // 重装胸甲 + 符文核心
+  const tg = x.createLinearGradient(-18, -78, 18, -32);
+  tg.addColorStop(0, c.steelHi); tg.addColorStop(0.45, c.armor); tg.addColorStop(1, c.dark);
+  x.fillStyle = tg;
+  x.beginPath();
+  x.moveTo(-18, -75); x.lineTo(18, -75);
+  x.lineTo(14, -34); x.lineTo(-14, -34);
+  x.closePath();
+  x.fill();
+  x.strokeStyle = c.gold; x.lineWidth = 1.6; x.stroke();
+
+  // 胸口发光符文核心
+  x.save(); x.shadowColor = '#fde68a'; x.shadowBlur = 10;
+  x.fillStyle = '#fef3c7';
+  chevron(x, 2, -56, 6.5, blue);
+  x.restore();
+
+  // 宽阔巨肩甲
+  for (const sx of [-19, 17]) {
+    x.fillStyle = c.main;
+    x.beginPath(); x.ellipse(sx, -72, 10, 6.5, sx < 0 ? -0.25 : 0.25, 0, TAU); x.fill();
+    x.strokeStyle = c.gold; x.lineWidth = 1.4; x.stroke();
+  }
+
+  // 头冠与头盔（蓝=黄金公牛神像，红=深渊巨熊领主）
+  const hx = 1, hy = -87;
+  const hg = x.createLinearGradient(hx - 10, hy - 10, hx + 10, hy + 10);
+  hg.addColorStop(0, '#94a3b8'); hg.addColorStop(0.5, '#334155'); hg.addColorStop(1, '#0f172a');
+  x.fillStyle = hg;
+  x.beginPath();
+  x.arc(hx, hy, 10.5, 0, TAU);
+  x.fill();
+  x.strokeStyle = c.gold; x.lineWidth = 1.3; x.stroke();
+
+  // 发光双目
+  x.save(); x.shadowColor = '#fde68a'; x.shadowBlur = 8;
+  x.fillStyle = '#fef08a';
+  x.fillRect(hx + 2, hy - 2, 7.5, 2.5);
+  x.restore();
+
+  if (blue) {
+    // 冲天牛角
+    x.strokeStyle = '#fde68a'; x.lineWidth = 3.5;
+    x.beginPath(); x.moveTo(hx - 5, hy - 6); x.quadraticCurveTo(hx - 18, hy - 14, hx - 12, hy - 28); x.stroke();
+    x.beginPath(); x.moveTo(hx + 5, hy - 6); x.quadraticCurveTo(hx + 20, hy - 14, hx + 14, hy - 28); x.stroke();
+  } else {
+    // 尖刺王冠 + 咆哮面甲
+    x.fillStyle = c.gold;
+    x.beginPath();
+    x.moveTo(hx - 9, hy - 7); x.lineTo(hx - 11, hy - 20); x.lineTo(hx - 4, hy - 11);
+    x.lineTo(hx + 1, hy - 23); x.lineTo(hx + 6, hy - 11); x.lineTo(hx + 11, hy - 19); x.lineTo(hx + 9, hy - 7);
+    x.closePath(); x.fill();
+  }
+
+  // 悬浮符文光环
+  x.save();
+  x.strokeStyle = 'rgba(253,230,138,0.85)'; x.lineWidth = 1.6;
+  x.beginPath(); x.ellipse(hx, hy - 22, 13, 4, 0, 0, TAU); x.stroke();
+  x.restore();
+
+  // 神器：巨型光剑 / 重型战锤
+  x.save();
+  x.shadowColor = c.light; x.shadowBlur = 10;
+  if (blue) {
+    x.fillStyle = c.gold; x.fillRect(14, -56, 12, 3);
+    const sg = x.createLinearGradient(18, -56, 46, -98);
+    sg.addColorStop(0, '#e0f2fe'); sg.addColorStop(1, c.light);
+    x.fillStyle = sg;
+    x.beginPath();
+    x.moveTo(18, -56); x.lineTo(44, -104); x.lineTo(49, -101); x.lineTo(24, -53);
+    x.closePath(); x.fill();
+  } else {
+    x.strokeStyle = '#78716c'; x.lineWidth = 4;
+    x.beginPath(); x.moveTo(12, -45); x.lineTo(36, -86); x.stroke();
+    x.fillStyle = c.main;
+    x.beginPath();
+    x.roundRect ? x.roundRect(24, -98, 22, 16, 3) : x.rect(24, -98, 22, 16);
+    x.fill();
+    x.strokeStyle = c.gold; x.lineWidth = 1.5; x.stroke();
+  }
+  x.restore();
+  x.restore();
+}
+
+/** 预渲染两军多兵种精灵：{ blue: { walk, idle, infantry, cavalry, siege, titan }, red: {...} } */
 export function makeUnitSprites(COL) {
   const out = {};
+  const builders = {
+    infantry: drawUnit,
+    cavalry: drawCavalry,
+    siege: drawSiege,
+    titan: drawTitan,
+  };
   for (const side of ['blue', 'red']) {
-    const mk = (ph, moving) => {
-      const c = document.createElement('canvas'); c.width = UNIT.W * UNIT.R; c.height = UNIT.H * UNIT.R;
-      const x = c.getContext('2d'); x.scale(UNIT.R, UNIT.R); x.translate(UNIT.OX, UNIT.OY);
-      drawUnit(x, side, COL[side], ph, moving); return c;
+    const pack = {};
+    for (const [kind, spec] of Object.entries(UNIT_SPEC)) {
+      const fn = builders[kind];
+      const mk = (ph, moving) => {
+        const c = document.createElement('canvas');
+        c.width = Math.round(spec.W * spec.R);
+        c.height = Math.round(spec.H * spec.R);
+        const x = c.getContext('2d');
+        x.scale(spec.R, spec.R);
+        x.translate(spec.OX, spec.OY);
+        fn(x, side, COL[side], ph, moving);
+        return c;
+      };
+      pack[kind] = {
+        walk: Array.from({ length: spec.FRAMES }, (_, i) => mk((i / spec.FRAMES) * TAU, true)),
+        idle: mk(0, false),
+      };
+    }
+    out[side] = {
+      walk: pack.infantry.walk,
+      idle: pack.infantry.idle,
+      ...pack,
     };
-    out[side] = { walk: Array.from({ length: UNIT.FRAMES }, (_, i) => mk(i / UNIT.FRAMES * TAU, true)), idle: mk(0, false) };
   }
   return out;
 }
@@ -103,7 +477,11 @@ export function drawStandard(ctx, c, t, ph, blue) {
 // ---------------- 城堡 ----------------
 // 布局用“朝战场方向为正”的本地坐标（蓝军直接画，红军镜像），原点 = 城门中心的地面
 export class Fortress {
-  constructor(side, c) { this.side = side; this.c = c; this.blue = side === 'blue'; this.dmg = 0; this.glow = 0.6; this.slits = []; this.fires = []; }
+  constructor(side, c) {
+    this.side = side; this.c = c; this.blue = side === 'blue';
+    this.dmg = 0; this.glow = 0.6; this.slits = []; this.fires = [];
+    this.siegeMode = false; this.alert = 0; this.share = 0.5;
+  }
   build(W, H, dpr, base, groundY, edge) {
     const k = this.k = clamp(H / 500, 0.5, 1.15), c = this.c;
     this.base = base; this.gy = groundY; this.dir = this.blue ? 1 : -1;
@@ -198,12 +576,20 @@ export class Fortress {
   // 本地坐标 → 画布坐标
   X(lx) { return this.base + this.dir * lx; }
   cannonPos() { return [this.X(this.cannon[0]), this.gy + this.cannon[1]]; }
-  /** share：本方战力占比（0~1）；surge：本方是否总攻 */
-  update(dt, share, surge) {
-    const dmgT = clamp((0.44 - share) / 0.28, 0, 1);
-    this.dmg += (dmgT - this.dmg) * (1 - Math.exp(-dt * 1.2));
+  ballistaPos() {
+    const fx = this.flagAt ? this.flagAt[0] : -34 * this.k;
+    return [this.X(fx + 18 * this.k), this.gy - 110 * this.k];
+  }
+  /** share：本方战力占比（0~1）；surge：本方是否总攻；besieged：三道防线均告破进入主堡攻城态 */
+  update(dt, share, surge, besieged = false) {
+    this.share = share;
+    this.siegeMode = !!besieged;
+    const dmgT = clamp((0.44 - share) / 0.28, 0, 1) + (besieged ? 0.22 : 0);
+    this.dmg += (clamp(dmgT, 0, 1) - this.dmg) * (1 - Math.exp(-dt * 1.2));
     const gT = clamp(0.25 + share * 0.9, 0.2, 1) + (surge ? 0.35 : 0);
     this.glow += (gT - this.glow) * (1 - Math.exp(-dt * 2));
+    const alT = besieged ? 1 : 0;
+    this.alert += (alT - this.alert) * (1 - Math.exp(-dt * 2.5));
   }
   draw(ctx, t, sprites, quality, rm) {
     const { k, c, dir, gy } = this; if (!this.body) return;
@@ -254,6 +640,40 @@ export class Fortress {
         ctx.globalAlpha = 0.6; ctx.drawImage(sprites.white, this.X(lx) - s * 0.2, gy + ly - s * 0.35, s * 0.4, s * 0.5);
       }
       ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+    }
+    // 主堡攻城决战态：城垛警戒信标 + 铁闸过载能量条 + 堡垒防御条
+    if (this.alert > 0.05) {
+      const al = this.alert;
+      const ap = rm ? 0.7 : (0.45 + 0.55 * Math.sin(t * 7.5));
+      // 城门过载金红铁闸光柱
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = `rgba(253,230,138,${0.7 * al * ap})`;
+      ctx.lineWidth = 2.1 * k;
+      ctx.beginPath();
+      for (let i = -1; i <= 1; i++) {
+        const xx = this.X(i * gw / 5.5);
+        ctx.moveTo(xx, gy + gt + 3 * k);
+        ctx.lineTo(xx, gy);
+      }
+      ctx.stroke();
+      // 主堡城垛脉冲警报灯
+      const [bx, by] = this.ballistaPos();
+      ctx.globalAlpha = 0.85 * al * ap;
+      ctx.drawImage(sprites.gold, bx - 16 * k, by - 16 * k, 32 * k, 32 * k);
+      ctx.globalCompositeOperation = 'source-over';
+      // 主堡顶部防御完整度条
+      const bw = 42 * k, bh = 5 * k, barX = this.X(4 * k) - bw / 2, barY = gy - 122 * k;
+      ctx.globalAlpha = 0.9 * al;
+      ctx.fillStyle = 'rgba(6,9,20,0.86)';
+      ctx.fillRect(barX - 1, barY - 1, bw + 2, bh + 2);
+      const hp = clamp(1 - this.dmg * 0.65, 0.12, 1);
+      ctx.fillStyle = hp > 0.45 ? '#fbbf24' : '#ef4444';
+      ctx.fillRect(barX, barY, bw * hp, bh);
+      ctx.strokeStyle = 'rgba(253,230,138,0.6)';
+      ctx.lineWidth = 0.8;
+      ctx.strokeRect(barX - 1, barY - 1, bw + 2, bh + 2);
+      ctx.restore();
     }
   }
   /** 起火点（用于冒烟），受损越重越多 */

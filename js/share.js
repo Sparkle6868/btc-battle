@@ -1,5 +1,5 @@
 // One-click Battle Report PNG generator (1200x675 Canvas 2D) & share modal controller
-import { t as T, fmtUsd } from './i18n.js?v=fdac0e84';
+import { t as T, fmtUsd } from './i18n.js?v=4f9251e5';
 
 const SANS = '-apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif';
 const MONO = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
@@ -38,8 +38,8 @@ function drawRatioCard(ctx, x, y, w, h, title, valText, subText, blueFrac) {
   }
 
   ctx.fillStyle = '#9aa6c8';
-  ctx.font = `600 13px ${MONO}`;
-  ctx.fillText(subText, x + 16, y + h - 15);
+  ctx.font = `600 12.5px ${MONO}`;
+  ctx.fillText(subText, x + 16, y + h - 15, w - 32);
   ctx.restore();
 }
 
@@ -76,7 +76,7 @@ export async function renderReportBlob(data) {
   ctx.font = `700 15px ${SANS}`;
   ctx.fillText(`${T('repSub')} · ${data.pair}`, 38, 74);
 
-  // Header center: Coinbase Premium & Fear/Greed pills
+  // Header center: Coinbase Premium, Fear/Greed, Perp Regime & CME Gap pills
   const pills = [];
   if (data.cbPremUsd != null && isFinite(data.cbPremUsd)) {
     const sign = data.cbPremUsd >= 0 ? '+' : '-';
@@ -95,19 +95,37 @@ export async function renderReportBlob(data) {
       bd: 'rgba(251,191,36,0.35)',
     });
   }
+  if (data.regime) {
+    const regCol = data.regime === 'long_build' ? '#93c5fd' : data.regime === 'short_squeeze' ? '#86efac' : data.regime === 'short_build' ? '#fca5a5' : '#fde68a';
+    pills.push({
+      txt: T('reg_' + data.regime),
+      col: regCol,
+      bg: 'rgba(255,255,255,0.08)',
+      bd: 'rgba(150,170,230,0.38)',
+    });
+  }
+  if (data.cmeGap && !data.cmeGap.filled) {
+    pills.push({
+      txt: `${T('repCme')} $${Math.round(data.cmeGap.close).toLocaleString('en-US')}`,
+      col: '#fde68a',
+      bg: 'rgba(251,191,36,0.12)',
+      bd: 'rgba(251,191,36,0.35)',
+    });
+  }
   if (pills.length) {
-    ctx.font = `700 13px ${SANS}`;
-    let px = 460;
+    ctx.font = `700 12px ${SANS}`;
+    let px = 395;
     for (const p of pills) {
-      const pw = Math.ceil(ctx.measureText(p.txt).width) + 22;
+      const pw = Math.ceil(ctx.measureText(p.txt).width) + 16;
+      if (px + pw > 860) break;
       ctx.fillStyle = p.bg;
       ctx.strokeStyle = p.bd;
       ctx.lineWidth = 1;
-      roundRect(ctx, px, 26, pw, 28, 999); ctx.fill(); ctx.stroke();
+      roundRect(ctx, px, 26, pw, 26, 999); ctx.fill(); ctx.stroke();
       ctx.fillStyle = p.col;
       ctx.textAlign = 'left';
-      ctx.fillText(p.txt, px + 11, 45);
-      px += pw + 10;
+      ctx.fillText(p.txt, px + 8, 43);
+      px += pw + 7;
     }
   }
 
@@ -180,7 +198,8 @@ export async function renderReportBlob(data) {
   const tkTot = (data.tk1m.bu || 0) + (data.tk1m.su || 0);
   const tkFrac = tkTot > 0 ? data.tk1m.bu / tkTot : 0.5;
   const tkVal = tkTot > 0 ? `${Math.round(tkFrac * 100)}% : ${Math.round((1 - tkFrac) * 100)}%` : '--';
-  drawRatioCard(ctx, 36, cy, cw, ch, T('repTk1m'), tkVal, `${fmtUsd(data.tk1m.bu || 0)} / ${fmtUsd(data.tk1m.su || 0)}`, tkTot > 0 ? tkFrac : null);
+  const tkSub = data.cvdDiv ? T(data.cvdDiv === 'bull' ? 'cvdDivBull' : 'cvdDivBear') : `${fmtUsd(data.tk1m.bu || 0)} / ${fmtUsd(data.tk1m.su || 0)}`;
+  drawRatioCard(ctx, 36, cy, cw, ch, T('repTk1m'), tkVal, tkSub, tkTot > 0 ? tkFrac : null);
 
   const bkTot = data.bk05 ? data.bk05.b05 + data.bk05.a05 : 0;
   const bkFrac = bkTot > 0 ? data.bk05.b05 / bkTot : 0.5;
@@ -190,12 +209,14 @@ export async function renderReportBlob(data) {
   const perp = data.perp;
   if (perp && perp.available) {
     const fStr = perp.funding != null ? `${perp.funding >= 0 ? '+' : ''}${(perp.funding * 100).toFixed(4)}%` : '--';
-    const oiStr = perp.oiUsd > 0 ? `OI ${fmtUsd(perp.oiUsd)}` : '--';
+    const oiDelta = data.oiChg1h != null && isFinite(data.oiChg1h) ? ` · ${T('repOi1h', `${data.oiChg1h >= 0 ? '+' : ''}${data.oiChg1h.toFixed(2)}%`)}` : '';
+    const oiStr = (perp.oiUsd > 0 ? `OI ${fmtUsd(perp.oiUsd)}` : '--') + oiDelta;
     drawRatioCard(ctx, 36 + (cw + gap) * 2, cy, cw, ch, T('repPerp'), fStr, oiStr, perp.longRatio != null ? perp.longRatio : null);
 
     const lqTot = (perp.liqLong5m || 0) + (perp.liqShort5m || 0);
     const lqVal = perp.hasLiqStream ? fmtUsd(lqTot) : '--';
-    const lqSub = perp.hasLiqStream ? T('perpLiqPair', fmtUsd(perp.liqLong5m || 0), fmtUsd(perp.liqShort5m || 0)) : T('perpLiqNa');
+    const lq1h = data.liq1h > 0 ? ` · 1h ${fmtUsd(data.liq1h)}` : '';
+    const lqSub = perp.hasLiqStream ? T('perpLiqPair', fmtUsd(perp.liqLong5m || 0), fmtUsd(perp.liqShort5m || 0)) + lq1h : T('perpLiqNa');
     drawRatioCard(ctx, 36 + (cw + gap) * 3, cy, cw, ch, T('repLiq'), lqVal, lqSub, lqTot > 0 ? perp.liqShort5m / lqTot : null);
   } else {
     const d5 = data.tk5mNet || 0;

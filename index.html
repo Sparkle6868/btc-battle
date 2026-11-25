@@ -7,7 +7,7 @@
 <meta name="description" content="BTC War Room · 比特币多空作战指挥室：BTC 实时多空战场动画、Binance / OKX / Coinbase 三所报价与美盘溢价、实时 K 线、永续大户散户比与双所爆仓流。" />
 <meta name="theme-color" content="#070a14" />
 <meta http-equiv="Cache-Control" content="no-cache" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self' https://api.binance.com https://data-api.binance.vision https://fapi.binance.com wss://stream.binance.com wss://stream.binance.com:9443 wss://data-stream.binance.vision wss://fstream.binance.com https://www.okx.com wss://ws.okx.com https://api.exchange.coinbase.com wss://ws-feed.exchange.coinbase.com https://api.alternative.me; object-src 'none'; frame-src 'none'; worker-src 'self'; manifest-src 'self'; base-uri 'self'; form-action 'none'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; media-src 'self' blob: data:; connect-src 'self' https://api.binance.com https://data-api.binance.vision https://fapi.binance.com wss://stream.binance.com wss://stream.binance.com:9443 wss://data-stream.binance.vision wss://fstream.binance.com https://www.okx.com wss://ws.okx.com https://api.exchange.coinbase.com wss://ws-feed.exchange.coinbase.com https://api.bybit.com wss://stream.bybit.com https://api.alternative.me; object-src 'none'; frame-src 'none'; worker-src 'self'; manifest-src 'self'; base-uri 'self'; form-action 'none'" />
 <meta name="referrer" content="strict-origin-when-cross-origin" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="BTC War Room · 比特币多空指挥室" />
@@ -36,7 +36,7 @@
 <!-- 网页字体异步加载，不阻塞渲染；加载失败时使用系统字体 -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Ma+Shan+Zheng&family=JetBrains+Mono:wght@500;700;800&display=swap" media="print" id="gfonts" />
 <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Ma+Shan+Zheng&family=JetBrains+Mono:wght@500;700;800&display=swap" /></noscript>
-<link rel="stylesheet" href="style.css?v=fdac0e84" />
+<link rel="stylesheet" href="style.css?v=4f9251e5" />
 </head>
 <body>
 <!-- 开场 -->
@@ -129,32 +129,57 @@
         <div class="pb-blue" id="pbBlue"></div><div class="pb-red" id="pbRed"></div>
         <div class="pb-clash" id="pbClash"></div>
       </div>
-      <div class="power-foot"><span id="basis" data-i18n-title="basisTitle" title="战力 = 价格涨跌 50%（10秒 + 1分钟）+ 吃单 30%（10秒 + 1分钟）+ ±0.5% 挂单 20%">战况依据：等待数据…</span><span id="streak"></span></div>
+      <div class="power-foot">
+        <div class="basis-row" id="basis" data-i18n-title="basisTitle" title="战力模型依据">战况依据：等待数据…</div>
+        <div class="power-foot-r">
+          <button type="button" class="pow-mode-btn" id="powModeBtn" data-i18n="pow5d" data-i18n-title="powModeT">五维综合</button>
+          <span id="streak"></span>
+        </div>
+      </div>
     </div>
   </section>
 
-  <section class="card battle-card">
+  <section class="card battle-card" id="battleCard">
     <canvas id="battle" role="img" aria-label="实时多空战场动画：蓝军代表买方（多），红军代表卖方（空）" data-i18n-aria="battleAria"></canvas>
     <div class="banner" id="banner"></div>
     <div class="hud-l"><span class="flag blue" data-i18n="flagL">多</span><span data-i18n="hudL">蓝军 · 买方</span></div>
     <div class="hud-r"><span data-i18n="hudR">卖方 · 红军</span><span class="flag red" data-i18n="flagS">空</span></div>
-    <div class="def-wrap" id="defWrap">
-      <button id="defBtn" class="def-btn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="defPop" data-i18n-title="defBtnT">
-        <span class="def-ico" aria-hidden="true">🛡️</span><span id="defLbl">防线 1%</span><span class="def-caret" aria-hidden="true">▾</span>
-      </button>
-      <div class="def-pop" id="defPop" role="listbox" hidden>
-        <button type="button" role="option" data-step="auto">自动 (1%/层)</button>
-        <button type="button" role="option" data-step="0.5">每 0.5% 一层</button>
-        <button type="button" role="option" data-step="1">每 1% 一层</button>
-        <button type="button" role="option" data-step="2">每 2% 一层</button>
+    <div class="battle-top-mid" id="battleTools">
+      <div class="def-wrap" id="defWrap">
+        <button id="defBtn" class="def-btn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="defPop" data-i18n-title="defBtnT">
+          <span class="def-ico" aria-hidden="true">🛡️</span><span id="defLbl">防线 1%</span><span class="def-caret" aria-hidden="true">▾</span>
+        </button>
+        <div class="def-pop" id="defPop" role="listbox" hidden>
+          <button type="button" role="option" data-step="auto">自动 (1%/层)</button>
+          <button type="button" role="option" data-step="0.5">每 0.5% 一层</button>
+          <button type="button" role="option" data-step="1">每 1% 一层</button>
+          <button type="button" role="option" data-step="2">每 2% 一层</button>
+        </div>
       </div>
+      <div class="demo-wrap" id="demoWrap">
+        <button id="demoBtn" class="def-btn demo-btn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="demoPop" data-i18n-title="demoBtnT">
+          <span aria-hidden="true">🎬</span><span data-i18n="demoBtn">演练</span><span class="def-caret" aria-hidden="true">▾</span>
+        </button>
+        <div class="def-pop demo-pop" id="demoPop" role="menu" hidden>
+          <button type="button" role="menuitem" data-demo="whale_blue" data-i18n="demoWhaleB">🐋 蓝军巨鲸空袭</button>
+          <button type="button" role="menuitem" data-demo="whale_red" data-i18n="demoWhaleR">🐋 红军巨鲸空袭</button>
+          <button type="button" role="menuitem" data-demo="liq_cascade" data-i18n="demoLiq">⚡ 连环爆仓天雷</button>
+          <button type="button" role="menuitem" data-demo="siege" data-i18n="demoSiege">⚔️ 骑兵攻城总攻</button>
+        </div>
+      </div>
+      <button id="theaterBtn" class="def-btn theater-btn" type="button" data-i18n-title="theaterBtnT">
+        <span aria-hidden="true">⛶</span><span id="theaterLbl" data-i18n="theaterBtn">大屏</span>
+      </button>
+      <button id="hudTogBtn" class="def-btn hud-tog-btn" type="button" hidden data-i18n="hudHide">隐藏HUD</button>
     </div>
+    <div class="kill-feed" id="killFeed"></div>
+    <div class="battle-tip" id="battleTip" hidden></div>
     <div class="legend" id="legend"></div>
   </section>
 
   <section class="card perp-card" id="perpCard">
     <div class="perp-head">
-      <div class="perp-title"><span class="h-ico">📊</span> <span data-i18n="perpTitle">永续合约全景</span> <span class="perp-src" id="perpSrc">--</span></div>
+      <div class="perp-title"><span class="h-ico">📊</span> <span data-i18n="perpTitle">永续合约全景</span> <span class="perp-src" id="perpSrc">--</span> <span class="regime-pill" id="perpRegime" hidden>--</span></div>
       <div class="perp-last" id="perpLastLiq"></div>
     </div>
     <div class="perp-grid">
@@ -162,6 +187,7 @@
         <span class="perp-k" data-i18n="perpFund">资金费率</span>
         <b class="perp-v" id="perpFund">--</b>
         <small class="perp-s" id="perpNext">--</small>
+        <small class="perp-s" id="perpApr">--</small>
       </div>
       <div class="perp-item">
         <span class="perp-k" data-i18n="perpBasis">期现基差</span>
@@ -172,9 +198,10 @@
         <span class="perp-k" data-i18n="perpOi">未平仓量 (OI)</span>
         <b class="perp-v" id="perpOi">--</b>
         <small class="perp-s" id="perpOiQty">--</small>
+        <small class="perp-s" id="perpOiDelta">--</small>
       </div>
       <div class="perp-item perp-ls-item">
-        <span class="perp-k" data-i18n="perpLsDual">大户持仓 vs 散户人数</span>
+        <span class="perp-k" data-i18n="perpLsDual">大户 · 散户 · 主动买卖比</span>
         <div class="ls-dual">
           <div class="ls-row">
             <span class="ls-tag" data-i18n="perpWhale">大户</span>
@@ -186,10 +213,22 @@
             <div class="perp-bar"><i class="pb-b" id="perpLsB"></i><i class="pb-r" id="perpLsR"></i></div>
             <b class="ls-num" id="perpLs">--</b>
           </div>
+          <div class="ls-row">
+            <span class="ls-tag" data-i18n="perpTaker">主动</span>
+            <div class="perp-bar"><i class="pb-b" id="perpTkLsB"></i><i class="pb-r" id="perpTkLsR"></i></div>
+            <b class="ls-num" id="perpTkLs">--</b>
+          </div>
         </div>
       </div>
       <div class="perp-item">
-        <span class="perp-k" data-i18n="perpLiq">5 分钟爆仓</span>
+        <div class="perp-k-row">
+          <span class="perp-k" id="perpLiqTitle" data-i18n="perpLiq">5 分钟爆仓</span>
+          <div class="mini-tabs" id="liqWinTabs" role="group">
+            <button type="button" data-lwin="5m" class="on">5m</button>
+            <button type="button" data-lwin="1h">1h</button>
+            <button type="button" data-lwin="24h">24h</button>
+          </div>
+        </div>
         <b class="perp-v" id="perpLiq">--</b>
         <small class="perp-s" id="perpLiqSub">--</small>
       </div>
@@ -197,7 +236,13 @@
   </section>
 
   <section class="card taker-card">
-    <h2><span class="h-ico">⚡</span> <span data-i18n="taker">吃单</span> <small data-i18n="takerSub">主动成交 · 谁在冲锋</small></h2>
+    <h2>
+      <span class="h-ico">⚡</span> <span data-i18n="taker">吃单</span> <small data-i18n="takerSub">主动成交 · 谁在冲锋</small>
+      <span class="card-ctrls">
+        <button type="button" class="mini-pill on" id="flowScope" data-i18n="flowAgg">三所聚合</button>
+        <button type="button" class="mini-pill" id="flowWin">2m</button>
+      </span>
+    </h2>
     <div class="ratio-block">
       <div class="rb-head"><span data-i18n="w10">10 秒</span><span class="rb-pct" id="tk10pct">--</span></div>
       <div class="ratio-bar"><i class="rb-b" id="tk10b"></i><i class="rb-r" id="tk10r"></i></div>
@@ -213,7 +258,11 @@
       <div class="ratio-bar"><i class="rb-b" id="tk300b"></i><i class="rb-r" id="tk300r"></i></div>
       <div class="rb-foot"><span class="c-blue" id="tk300buy">--</span><span class="c-red" id="tk300sell">--</span></div>
     </div>
-    <div class="delta"><span data-i18n="delta">5 分钟净主动买入</span> <b id="delta">--</b></div>
+    <div class="delta-row">
+      <div class="delta"><span data-i18n="delta">5 分钟净主动买入</span> <b id="delta">--</b></div>
+      <span class="cvd-div" id="cvdDiv" hidden></span>
+    </div>
+    <div class="mini-cap" id="flowCap" data-i18n="flowCap">近 2 分钟 主动买(上) / 卖(下) · 黄线=累计净额 · 白线=价格</div>
     <canvas id="flowChart" class="mini"></canvas>
   </section>
 
@@ -229,8 +278,17 @@
       <div class="ratio-bar"><i class="rb-b" id="bk1b"></i><i class="rb-r" id="bk1r"></i></div>
       <div class="rb-foot"><span class="c-blue" id="bk1bid">--</span><span class="c-red" id="bk1ask">--</span></div>
     </div>
+    <div class="ratio-block compact">
+      <div class="rb-head"><span>±2%</span><span class="rb-pct" id="bk2pct">--</span></div>
+      <div class="ratio-bar sm"><i class="rb-b" id="bk2b"></i><i class="rb-r" id="bk2r"></i></div>
+      <div class="rb-foot"><span class="c-blue" id="bk2bid">--</span><span class="c-red" id="bk2ask">--</span></div>
+    </div>
     <div class="spread"><span data-i18n="bb">买一</span> <b class="c-blue" id="bb">--</b> · <span data-i18n="ba">卖一</span> <b class="c-red" id="ba">--</b> · <span data-i18n="spr">价差</span> <b id="spr">--</b></div>
     <canvas id="depthChart" class="mini depth"></canvas>
+    <div class="wall-box">
+      <div class="wall-head" data-i18n="wallTopTitle">巨鲸挂单墙 Top 3（±3.5%）</div>
+      <div class="wall-cols" id="wallList"></div>
+    </div>
   </section>
 
   <section class="card trades-card">
@@ -252,9 +310,18 @@
           <button type="button" data-tf="5m">5m</button>
           <button type="button" data-tf="15m">15m</button>
           <button type="button" data-tf="1h">1h</button>
+          <button type="button" data-tf="4h">4h</button>
+          <button type="button" data-tf="1d">1d</button>
         </div>
       </h2>
-      <div class="kline-info" id="klineInfo">--</div>
+      <div class="kline-bar">
+        <div class="kline-info" id="klineInfo">--</div>
+        <div class="ov-tabs" id="chartOvTabs" role="group">
+          <button type="button" data-ov="vwap" class="on">VWAP</button>
+          <button type="button" data-ov="vpvr" class="on">VPVR</button>
+          <button type="button" data-ov="lines" class="on" data-i18n="ovLines">防线</button>
+        </div>
+      </div>
       <canvas id="klineChart" class="kline"></canvas>
       <div class="mtf-grid" id="mtfGrid">
         <div class="mtf-cell" data-mtf="5m"><span>5m</span><b id="mtf-5m">--</b></div>
@@ -289,11 +356,17 @@
         <span class="sess-pill" id="sessUs" data-i18n="sessUs">美盘</span>
         <span class="sess-pill cme" id="sessCme">--</span>
       </div>
+      <div class="cme-gap-bar" id="cmeGapBar">
+        <span class="cme-k" data-i18n="cmeGapTitle">CME 周末缺口</span>
+        <b class="cme-v" id="cmeGapVal">--</b>
+        <small class="cme-s" id="cmeGapSub"></small>
+      </div>
       <div class="rad-metrics">
         <div class="rad-tile">
           <span data-i18n="cbPrem">Coinbase 溢价</span>
           <b id="radCbPrem">--</b>
           <small id="radCbPremPct">--</small>
+          <canvas id="premSpark" class="micro-spark"></canvas>
         </div>
         <div class="rad-tile">
           <span data-i18n="basisLbl">永续基差</span>
@@ -312,7 +385,11 @@
       <h2>
         <span class="h-ico">💀</span>
         <span data-i18n="liqTitle">实时爆仓流</span>
-        <span class="liq-src" id="liqSrc">BN · OKX</span>
+        <span class="liq-src" id="liqSrc">
+          <span class="ex-dot" data-ex="bin"><i></i>BN</span>
+          <span class="ex-dot" data-ex="okx"><i></i>OKX</span>
+          <span class="ex-dot" data-ex="byb"><i></i>BYB</span>
+        </span>
         <span class="liq-mini" id="liqMini"></span>
       </h2>
       <div class="liq-head">
@@ -344,6 +421,6 @@
     </div>
   </div>
 </div>
-<script type="module" src="js/app.js?v=fdac0e84"></script>
+<script type="module" src="js/app.js?v=4f9251e5"></script>
 </body>
 </html>

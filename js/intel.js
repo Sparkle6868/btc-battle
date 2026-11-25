@@ -1,6 +1,6 @@
 // BTC 指挥室情报层：跨所三所报价与 Coinbase 溢价、多周期涨跌矩阵、恐慌贪婪指数、全球交易时段
-import { fetchJson, binFetch } from './net.js?v=fdac0e84';
-import { lsGet, lsSet } from './storage.js?v=fdac0e84';
+import { fetchJson, binFetch } from './net.js?v=4f9251e5';
+import { lsGet, lsSet } from './storage.js?v=4f9251e5';
 
 const BIN_HOSTS = ['https://api.binance.com', 'https://data-api.binance.vision'];
 const EX_STALE_MS = 30000;
@@ -25,6 +25,8 @@ export class CrossExchangeFeed {
       maxSpreadUsd: null,
       maxSpreadPct: null,
     };
+    this.premHist = [];
+    this.lastPremSampleAt = 0;
     this.cbOpen = 0;
     this.cbStatsAt = 0;
     this.pollT = null;
@@ -74,6 +76,11 @@ export class CrossExchangeFeed {
     if (bn > 0 && cb > 0) {
       this.state.cbPremUsd = cb - bn;
       this.state.cbPremPct = (cb / bn - 1) * 100;
+      if (now - this.lastPremSampleAt >= 30000 || !this.premHist.length) {
+        this.lastPremSampleAt = now;
+        this.premHist.push({ ts: now, v: this.state.cbPremUsd });
+        if (this.premHist.length > 60) this.premHist.shift();
+      }
     } else {
       this.state.cbPremUsd = null;
       this.state.cbPremPct = null;
@@ -113,6 +120,7 @@ export class CrossExchangeFeed {
       okxSpreadUsd: this.state.okxSpreadUsd,
       maxSpreadUsd: this.state.maxSpreadUsd,
       maxSpreadPct: this.state.maxSpreadPct,
+      premHist: this.premHist.slice(),
     };
   }
 
@@ -200,6 +208,8 @@ export class MtfTracker {
     this.refs = { '5m': 0, '15m': 0, '1h': 0, '4h': 0, '24h': 0, '7d': 0 };
     this.dailyOpen = 0;
     this.dailyUtcDay = -1;
+    this.cmeGap = null;
+    this.candles1h = [];
     this.pollT = null;
     this.running = false;
     this.lastFetchAt = 0;
@@ -228,13 +238,13 @@ export class MtfTracker {
     for (const host of BIN_HOSTS) {
       try {
         const d = await binFetch(`${host}/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`, 2, 6000);
-        if (Array.isArray(d) && d.length) return d.map((k) => ({ t: +k[0], o: +k[1], c: +k[4] }));
+        if (Array.isArray(d) && d.length) return d.map((k) => ({ t: +k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] }));
       } catch (e) { if (e.rate) break; }
     }
     try {
       const j = await fetchJson(`https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=${encodeURIComponent(okxBar)}&limit=${limit}`, 6000);
       const d = j && Array.isArray(j.data) ? j.data : [];
-      if (d.length) return d.slice().reverse().map((k) => ({ t: +k[0], o: +k[1], c: +k[4] }));
+      if (d.length) return d.slice().reverse().map((k) => ({ t: +k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5] }));
     } catch {}
     return null;
   }
@@ -242,7 +252,7 @@ export class MtfTracker {
   async refresh() {
     const [k1m, k1h] = await Promise.all([
       this._fetchKlines('1m', '1m', 61),
-      this._fetchKlines('1h', '1H', 169),
+      this._fetchKlines('1h', '1H', 192),
     ]);
     this.lastFetchAt = Date.now();
     if (k1m && k1m.length > 5) {
@@ -280,7 +290,60 @@ export class MtfTracker {
         }
       }
     }
+    if (k1h && k1h.length) {
+      this.candles1h = k1h;
+      this.cmeGap = this._computeCmeGap(k1h);
+    }
     if (this.onData) this.onData(this.refs);
+  }
+
+  _computeCmeGap(k1h) {
+    let fri = null, sun = null;
+    for (let i = k1h.length - 1; i >= 0; i--) {
+      const b = k1h[i];
+      const d = new Date(b.t);
+      if (d.getUTCDay() === 0 && d.getUTCHours() === 22 && !sun) {
+        sun = { bar: b, idx: i };
+      } else if (sun && d.getUTCDay() === 5 && d.getUTCHours() === 21 && sun.bar.t - b.t <= 54 * 3600000 && sun.bar.t - b.t >= 44 * 3600000) {
+        fri = { bar: b, idx: i };
+        break;
+      }
+    }
+    if (!fri || !sun) return null;
+    const close = fri.bar.c, open = sun.bar.o;
+    if (!(close > 0) || !(open > 0)) return null;
+    const ratio = Math.abs(open - close) / close;
+    if (ratio < 0.0015) return null;
+    const lo = Math.min(close, open), hi = Math.max(close, open);
+    const dir = open > close ? 'up' : 'down';
+    let minSeen = open, maxSeen = open;
+    for (let i = sun.idx; i < k1h.length; i++) {
+      if (k1h[i].l < minSeen) minSeen = k1h[i].l;
+      if (k1h[i].h > maxSeen) maxSeen = k1h[i].h;
+    }
+    const span = Math.max(1, hi - lo);
+    const fillPct = dir === 'up'
+      ? Math.max(0, Math.min(100, ((hi - minSeen) / span) * 100))
+      : Math.max(0, Math.min(100, ((maxSeen - lo) / span) * 100));
+    const filled = dir === 'up' ? minSeen <= lo : maxSeen >= hi;
+    return { close, open, lo, hi, dir, filled, fillPct, ts: sun.bar.t };
+  }
+
+  getCmeGap(livePrice) {
+    if (!this.cmeGap) return null;
+    const g = { ...this.cmeGap };
+    if (livePrice > 0 && !g.filled) {
+      const span = Math.max(1, g.hi - g.lo);
+      if (g.dir === 'up') {
+        if (livePrice <= g.lo) { g.filled = true; g.fillPct = 100; }
+        else g.fillPct = Math.max(g.fillPct, Math.min(100, ((g.hi - livePrice) / span) * 100));
+      } else {
+        if (livePrice >= g.hi) { g.filled = true; g.fillPct = 100; }
+        else g.fillPct = Math.max(g.fillPct, Math.min(100, ((livePrice - g.lo) / span) * 100));
+      }
+    }
+    g.distPct = livePrice > 0 ? ((g.close - livePrice) / livePrice) * 100 : null;
+    return g;
   }
 
   compute(livePrice) {

@@ -1,12 +1,12 @@
-import { FeedManager, SOURCES, BTC_MARKET, fetchBinance1s, fetchBinanceAggTrades, fetchOkxTrades, fetchCoinbaseTrades } from './feeds.js?v=fdac0e84';
-import { Battle } from './battle.js?v=fdac0e84';
-import { t as T, setLang, onLang, applyI18n, fmtUsd, fmtShort, fmtNum } from './i18n.js?v=fdac0e84';
-import { AudioController } from './music.js?v=fdac0e84';
-import { lsGet, lsSet } from './storage.js?v=fdac0e84';
-import { FuturesFeed } from './futures.js?v=fdac0e84';
-import { KlineChart } from './chart.js?v=fdac0e84';
-import { CrossExchangeFeed, MtfTracker, fetchFearGreed, getTradingSession } from './intel.js?v=fdac0e84';
-import { initShare } from './share.js?v=fdac0e84';
+import { FeedManager, MultiSpotAggregator, SOURCES, BTC_MARKET, fetchBinance1s, fetchBinanceAggTrades, fetchOkxTrades, fetchCoinbaseTrades } from './feeds.js?v=4f9251e5';
+import { Battle } from './battle.js?v=4f9251e5';
+import { t as T, setLang, onLang, applyI18n, fmtUsd, fmtShort, fmtNum } from './i18n.js?v=4f9251e5';
+import { AudioController } from './music.js?v=4f9251e5';
+import { lsGet, lsSet } from './storage.js?v=4f9251e5';
+import { FuturesFeed, computeRegime, estimateLiqZones } from './futures.js?v=4f9251e5';
+import { KlineChart } from './chart.js?v=4f9251e5';
+import { CrossExchangeFeed, MtfTracker, fetchFearGreed, getTradingSession } from './intel.js?v=4f9251e5';
+import { initShare } from './share.js?v=4f9251e5';
 
 const $ = (id) => document.getElementById(id);
 const pad = (n) => String(n).padStart(2, '0');
@@ -62,6 +62,7 @@ window.__big = () => ({ big: S.big, from: S.bigFrom, th: S.threshold });
 
 // ---------- 实时 K 线 ----------
 const tfBtns = [...document.querySelectorAll('#tfTabs button[data-tf]')];
+const ovBtns = [...document.querySelectorAll('#chartOvTabs button[data-ov]')];
 const klineChart = new KlineChart({
   canvas: $('klineChart'),
   infoEl: $('klineInfo'),
@@ -72,18 +73,36 @@ const klineChart = new KlineChart({
       b.setAttribute('aria-pressed', on);
     });
   },
+  onOvChange(ov) {
+    ovBtns.forEach((b) => {
+      const on = !!ov[b.dataset.ov];
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on);
+    });
+  },
 });
 tfBtns.forEach((b) => b.addEventListener('click', () => klineChart.setTf(b.dataset.tf)));
+ovBtns.forEach((b) => b.addEventListener('click', () => klineChart.toggleOverlay(b.dataset.ov)));
 
 // ---------- 状态 ----------
+const EX_CODE = { binance: 'BN', okx: 'OKX', coinbase: 'CB' };
 let flashT, lastShown = 0;
+let flowScope = lsGet('cw_flow_scope', 'agg') === 'single' ? 'single' : 'agg';
+let flowWin = lsGet('cw_flow_win', '2m') === '15m' ? '15m' : '2m';
+let powMode = lsGet('cw_pow_mode', '5d') === 'fast' ? 'fast' : '5d';
+let liqWin = ['5m', '1h', '24h'].includes(lsGet('cw_liq_win', '5m')) ? lsGet('cw_liq_win', '5m') : '5m';
+
+const mkBuckets = () => new Array(300).fill(null).map(() => ({ sec: 0, b: 0, s: 0, bu: 0, su: 0, n: 0 }));
 const S = {
   src: null, last: 0, shownStr: '', open24h: 0, hi: 0, lo: 0, vol: 0, tradesThisSec: 0,
-  buckets: new Array(300).fill(null).map(() => ({ sec: 0, b: 0, s: 0, bu: 0, su: 0, n: 0 })),
+  buckets: mkBuckets(),
+  aggBuckets: mkBuckets(),
+  agg10s: new Array(90).fill(null).map(() => ({ bin: 0, bu: 0, su: 0, p: 0 })),
   px: new Array(120).fill(null).map(() => ({ sec: 0, p: 0 })), tickDir: 0,
   book: null, threshold: 0, surge: null, surgeSince: 0, surgeHeld: 0, lastRefreshAt: 0, wonFor: null,
   big: [], bigFrom: 0, bigLoading: false, lastAggId: 0, lastTs: 0,
-  since: 0, liveSec: null, bfGen: 0, nEma: 0,
+  since: 0, liveSec: null, bfGen: 0, nEma: 0, cvdDiv: null,
+  recentTakers: [],
 };
 function resetStats() {
   for (const b of S.buckets) { b.sec = 0; b.b = b.s = b.bu = b.su = b.n = 0; }
@@ -97,10 +116,17 @@ function resetStats() {
   battle.resetDefense();
   renderTrades();
 }
-function bucket(sec) {
-  const b = S.buckets[sec % 300];
+function bucket(sec, arr = S.buckets) {
+  const b = arr[sec % 300];
   if (b.sec !== sec) { b.sec = sec; b.b = b.s = b.bu = b.su = b.n = 0; }
   return b;
+}
+function recordAgg10s(sec, side, usd, price) {
+  const bin = Math.floor(sec / 10);
+  const slot = S.agg10s[bin % 90];
+  if (slot.bin !== bin) { slot.bin = bin; slot.bu = 0; slot.su = 0; slot.p = 0; }
+  if (side === 'buy') slot.bu += usd; else slot.su += usd;
+  if (price > 0) slot.p = price;
 }
 function priceChange(secs) {
   if (!S.last) return 0;
@@ -115,18 +141,34 @@ function priceChange(secs) {
   }
   return 0;
 }
-function windowSum(secs) {
+function windowSum(secs, arr = S.buckets) {
   const now = Math.floor(Date.now() / 1000); let b = 0, s = 0, bu = 0, su = 0, n = 0;
-  for (let i = 0; i < secs; i++) { const k = S.buckets[(now - i) % 300]; if (k.sec === now - i) { b += k.b; s += k.s; bu += k.bu; su += k.su; n += k.n; } }
+  for (let i = 0; i < secs; i++) { const k = arr[(now - i) % 300]; if (k.sec === now - i) { b += k.b; s += k.s; bu += k.bu; su += k.su; n += k.n; } }
   return { b, s, bu, su, n };
 }
 
-// ---------- 成交合并 ----------
+// ---------- 成交合并与三所聚合 ----------
 let pend = null, pendTimer = null;
 function flushPend() { if (!pend) return; const t = pend; pend = null; clearTimeout(pendTimer); onMergedTrade(t); }
+function pushRecentTaker(side, price, usd) {
+  const now = Date.now();
+  S.recentTakers.push({ ts: now, side, price, usd });
+  while (S.recentTakers.length > 400 || (S.recentTakers.length && now - S.recentTakers[0].ts > 12000)) S.recentTakers.shift();
+}
+function ingestBigTrade(r, live = true) {
+  const dupe = S.big.find((x) => x.ex === r.ex && x.side === r.side && Math.abs(x.ts - r.ts) < 120 && Math.abs(x.usd - r.usd) < 5);
+  if (dupe) return;
+  S.big.unshift(r);
+  if (S.big.length > 500) S.big.length = 500;
+  if (live && r.usd >= S.threshold) addTradeRow(r);
+  if (live && r.usd >= cfg().th.whale) {
+    klineChart.addMarker({ ts: r.ts || Date.now(), price: r.price, type: 'whale', side: r.side === 'buy' ? 'blue' : 'red', usd: r.usd });
+  }
+}
 function onTrade(t, src) {
   S.tradesThisSec++;
-  const sec = Math.floor(Date.now() / 1000), bk = bucket(sec), usd = t.price * t.qty;
+  const sec = Math.floor(Date.now() / 1000), bk = bucket(sec, S.buckets), abk = bucket(sec, S.aggBuckets), usd = t.price * t.qty;
+  const ex = EX_CODE[src] || 'BN';
   if (!S.since) S.since = sec;
   if (S.liveSec == null) {
     S.liveSec = sec; if (!S.bigFrom) S.bigFrom = Date.now();
@@ -140,22 +182,33 @@ function onTrade(t, src) {
   }
   if (t.id) S.lastAggId = t.id;
   if (t.ts > 0) S.lastTs = t.ts;
-  if (t.side === 'buy') { bk.b += t.qty; bk.bu += usd; } else { bk.s += t.qty; bk.su += usd; }
-  bk.n++;
+  if (t.side === 'buy') { bk.b += t.qty; bk.bu += usd; abk.b += t.qty; abk.bu += usd; }
+  else { bk.s += t.qty; bk.su += usd; abk.s += t.qty; abk.su += usd; }
+  bk.n++; abk.n++;
+  recordAgg10s(sec, t.side, usd, t.price);
+  pushRecentTaker(t.side, t.price, usd);
   if (S.last && t.price !== S.last) { S.tickDir = t.price > S.last ? 1 : -1; audio.tick(S.tickDir); }
   S.last = t.price;
   const ph = S.px[sec % 120]; ph.sec = sec; ph.p = t.price;
   klineChart.onTrade(t);
   crossEx.inject(src, t.price, S.open24h);
-  if (pend && pend.side === t.side && pend.ts === t.ts) { pend.qty += t.qty; pend.usd += usd; pend.price = pend.usd / pend.qty; }
-  else { flushPend(); pend = { ...t, usd }; pendTimer = setTimeout(flushPend, 80); }
+  if (pend && pend.side === t.side && pend.ts === t.ts && pend.ex === ex) { pend.qty += t.qty; pend.usd += usd; pend.price = pend.usd / pend.qty; }
+  else { flushPend(); pend = { ...t, usd, ex }; pendTimer = setTimeout(flushPend, 80); }
+}
+function onAggTrade(t) {
+  const sec = Math.floor(Date.now() / 1000), abk = bucket(sec, S.aggBuckets), usd = t.price * t.qty;
+  if (t.side === 'buy') { abk.b += t.qty; abk.bu += usd; } else { abk.s += t.qty; abk.su += usd; }
+  abk.n++;
+  recordAgg10s(sec, t.side, usd, 0);
+  if (t.src) crossEx.inject(t.src, t.price, 0);
+  if (usd >= cfg().chips[0]) {
+    ingestBigTrade({ ts: t.ts || Date.now(), side: t.side, price: t.price, qty: t.qty, usd, ex: t.ex }, true);
+  }
 }
 function onMergedTrade(t) {
   battle.fire(t.side, t.usd, t.qty);
   if (t.usd >= cfg().chips[0]) {
-    const r = { ts: t.ts || Date.now(), side: t.side, price: t.price, qty: t.qty, usd: t.usd };
-    S.big.unshift(r); if (S.big.length > 500) S.big.length = 500;
-    if (t.usd >= S.threshold) addTradeRow(r);
+    ingestBigTrade({ ts: t.ts || Date.now(), side: t.side, price: t.price, qty: t.qty, usd: t.usd, ex: t.ex || EX_CODE[S.src] || 'BN' }, true);
   }
   if (t.usd >= cfg().th.shell) audio.impact(t.usd * 50000 / cfg().th.shell, t.side === 'buy' ? 'blue' : 'red');
 }
@@ -164,8 +217,9 @@ function tradeLi(t, anim = true) {
   if (!anim) li.style.animation = 'none';
   li.className = (t.side === 'buy' ? 'buy' : 'sell') + (whale ? ' whale' : '');
   li.style.setProperty('--a', Math.min(0.08 + Math.log10(t.usd / S.threshold + 1) * 0.25, 0.45).toFixed(2));
+  const exTag = t.ex ? `<em class="tex">${t.ex}</em>` : '';
   li.innerHTML = `<span>${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}</span>` +
-    `<span class="s">${t.side === 'buy' ? T('sideBuy') : T('sideSell')}</span><span>${fmtP(t.price)}</span>` +
+    `<span class="s">${t.side === 'buy' ? T('sideBuy') : T('sideSell')}${exTag}</span><span>${fmtP(t.price)}</span>` +
     `<span>${fmtQ(t.qty)}</span><span>${whale ? '🐋 ' : ''}${fmtUsd(t.usd)}</span>`;
   return li;
 }
@@ -197,7 +251,7 @@ async function backfillBig(gen, firstId, afterId) {
   for (const x of raw) {
     const side = x.m ? 'sell' : 'buy', usd = x.p * x.q;
     if (cur && cur.ts === x.T && cur.side === side) { cur.qty += x.q; cur.usd += usd; cur.price = cur.usd / cur.qty; }
-    else { if (cur) out.push(cur); cur = { ts: x.T, side, price: x.p, qty: x.q, usd }; }
+    else { if (cur) out.push(cur); cur = { ts: x.T, side, price: x.p, qty: x.q, usd, ex: 'BN' }; }
   }
   if (cur) out.push(cur);
   const min = cfg().chips[0], old = out.filter(x => x.usd >= min).reverse();
@@ -214,8 +268,12 @@ async function backfill(gen, firstTs, skew, liveSec) {
     if (x.t + 1000 > firstTs) continue;
     const ls = Math.floor((x.t + skew) / 1000);
     if (ls >= liveSec || ls <= now - 300) continue;
-    const b = S.buckets[ls % 300];
-    if (b.sec !== ls) { b.sec = ls; b.b = x.tb; b.s = x.v - x.tb; b.bu = x.tbq; b.su = x.q - x.tbq; b.n = x.n; }
+    for (const arr of [S.buckets, S.aggBuckets]) {
+      const b = arr[ls % 300];
+      if (b.sec !== ls) { b.sec = ls; b.b = x.tb; b.s = x.v - x.tb; b.bu = x.tbq; b.su = x.q - x.tbq; b.n = x.n; }
+    }
+    recordAgg10s(ls, 'buy', x.tbq, x.c);
+    recordAgg10s(ls, 'sell', Math.max(0, x.q - x.tbq), x.c);
     if (ls > now - 120 && x.v > 0) { const ph = S.px[ls % 120]; if (ph.sec !== ls) { ph.sec = ls; ph.p = x.c; } }
     if (!S.since || ls < S.since) S.since = ls;
   }
@@ -240,8 +298,12 @@ async function backfillTrades(gen, src, firstTs, skew, liveSec, prevTs) {
     a.n++; a.p = x.p;
   }
   for (const [ls, a] of agg) {
-    const b = S.buckets[ls % 300];
-    if (b.sec !== ls) { b.sec = ls; b.b = a.b; b.s = a.s; b.bu = a.bu; b.su = a.su; b.n = a.n; }
+    for (const arr of [S.buckets, S.aggBuckets]) {
+      const b = arr[ls % 300];
+      if (b.sec !== ls) { b.sec = ls; b.b = a.b; b.s = a.s; b.bu = a.bu; b.su = a.su; b.n = a.n; }
+    }
+    recordAgg10s(ls, 'buy', a.bu, a.p);
+    recordAgg10s(ls, 'sell', a.su, a.p);
     if (ls > now - 120) { const ph = S.px[ls % 120]; if (ph.sec !== ls) { ph.sec = ls; ph.p = a.p; } }
   }
   if (!prevTs) {
@@ -249,10 +311,11 @@ async function backfillTrades(gen, src, firstTs, skew, liveSec, prevTs) {
     if (from && from < liveSec && (!S.since || from < S.since)) S.since = Math.max(from, now - 299);
   }
   const out = []; let cur = null;
+  const ex = EX_CODE[src] || 'OKX';
   for (const x of tr) {
     const usd = x.p * x.q;
     if (cur && cur.ts === x.ts && cur.side === x.side) { cur.qty += x.q; cur.usd += usd; cur.price = cur.usd / cur.qty; }
-    else { if (cur) out.push(cur); cur = { ts: x.ts, side: x.side, price: x.p, qty: x.q, usd }; }
+    else { if (cur) out.push(cur); cur = { ts: x.ts, side: x.side, price: x.p, qty: x.q, usd, ex }; }
   }
   if (cur) out.push(cur);
   const min = cfg().chips[0], old = out.filter(x => x.usd >= min);
@@ -340,12 +403,14 @@ function renderCrossEx(cx = cxState) {
   const sprEl = $('radSpread'), sprPct = $('radSpreadPct');
   sprEl.textContent = cx.maxSpreadUsd != null && isFinite(cx.maxSpreadUsd) ? `$${cx.maxSpreadUsd.toFixed(1)}` : '--';
   if (sprPct) sprPct.textContent = cx.maxSpreadPct != null && isFinite(cx.maxSpreadPct) ? `${cx.maxSpreadPct.toFixed(2)}%` : '--';
+  drawPremSpark(cx.premHist);
   syncBattleAtmo();
 }
 
 const crossEx = new CrossExchangeFeed({
   onData(st) { cxState = st; renderCrossEx(st); },
 });
+const multiSpot = new MultiSpotAggregator({ onTrade: onAggTrade });
 
 const fm = new FeedManager({
   onStatus(state, label, src) {
@@ -355,7 +420,7 @@ const fm = new FeedManager({
     if (state === 'connecting') introStep(40, 'introConn', label);
     if (state === 'open') introStep(65, 'introScout');
     if (state === 'live') { introStep(90, 'introReady'); finishIntro(); }
-    if (src !== S.src) { if (S.src) resetStats(); S.src = src; }
+    if (src !== S.src) { if (S.src) resetStats(); S.src = src; multiSpot.setPrimary(src); }
     $('pair').textContent = `${M.base}/${SOURCES[src].quote} · ${SOURCES[src].name}`;
     syncExActive();
   },
@@ -416,8 +481,130 @@ srcOpts.forEach((b) => {
 document.addEventListener('click', (e) => {
   if (srcPop && !srcPop.hidden && !e.target.closest('#srcWrap')) closeSourcePop();
   if (defPop && !defPop.hidden && !e.target.closest('#defWrap')) closeDefPop();
+  if (demoPop && !demoPop.hidden && !e.target.closest('#demoWrap')) closeDemoPop();
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSourcePop(); closeDefPop(); } });
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if ((srcPop && !srcPop.hidden) || (defPop && !defPop.hidden) || (demoPop && !demoPop.hidden)) {
+    closeSourcePop(); closeDefPop(); closeDemoPop(); return;
+  }
+  if (document.body.classList.contains('theater')) setTheater(false);
+});
+
+// ---------- 战场演练菜单 & 沉浸全屏大屏 (Theater Mode) & 播报/侦察 ----------
+const demoBtn = $('demoBtn'), demoPop = $('demoPop');
+function closeDemoPop() {
+  if (!demoPop || demoPop.hidden) return;
+  demoPop.hidden = true;
+  if (demoBtn) demoBtn.setAttribute('aria-expanded', 'false');
+}
+if (demoBtn) {
+  demoBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeDefPop();
+    const open = demoPop.hidden;
+    demoPop.hidden = !open;
+    demoBtn.setAttribute('aria-expanded', open);
+  });
+}
+document.querySelectorAll('#demoPop button[data-demo]').forEach((b) => {
+  b.addEventListener('click', () => {
+    const kind = b.dataset.demo;
+    closeDemoPop();
+    battle.triggerDemo(kind);
+  });
+});
+battle.onDemoSfx = (type, side, rec) => {
+  if (type === 'whale') audio.whale(side);
+  else if (type === 'liq') audio.impact(320000, side);
+  else if (type === 'breach') audio.breach(side, rec);
+  else if (type === 'surge') audio.surge(side);
+};
+
+const theaterBtn = $('theaterBtn'), theaterLbl = $('theaterLbl'), hudTogBtn = $('hudTogBtn');
+let hudHidden = false;
+function renderTheaterUi() {
+  const on = document.body.classList.contains('theater');
+  if (theaterLbl) theaterLbl.textContent = T(on ? 'theaterExit' : 'theaterBtn');
+  if (theaterBtn) theaterBtn.setAttribute('aria-pressed', on);
+  if (hudTogBtn) {
+    hudTogBtn.hidden = !on;
+    hudTogBtn.textContent = T(hudHidden ? 'hudShow' : 'hudHide');
+  }
+}
+function setTheater(on) {
+  document.body.classList.toggle('theater', !!on);
+  if (!on) { hudHidden = false; document.body.classList.remove('hud-hidden'); }
+  renderTheaterUi();
+  if (on && document.documentElement.requestFullscreen && !document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  } else if (!on && document.fullscreenElement && document.exitFullscreen) {
+    document.exitFullscreen().catch(() => {});
+  }
+  requestAnimationFrame(() => { battle.resize(); klineChart.scheduleDraw(); });
+  setTimeout(() => { battle.resize(); klineChart.scheduleDraw(); }, 180);
+}
+if (theaterBtn) theaterBtn.addEventListener('click', () => setTheater(!document.body.classList.contains('theater')));
+if (hudTogBtn) hudTogBtn.addEventListener('click', () => {
+  hudHidden = !hudHidden;
+  document.body.classList.toggle('hud-hidden', hudHidden);
+  renderTheaterUi();
+});
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement && document.body.classList.contains('theater')) {
+    // 用户按浏览器原生 ESC 退出了全屏，同步退出大屏布局
+    document.body.classList.remove('theater', 'hud-hidden');
+    hudHidden = false;
+    renderTheaterUi();
+    requestAnimationFrame(() => { battle.resize(); klineChart.scheduleDraw(); });
+  }
+});
+
+function renderKillFeed(list = battle.killFeed) {
+  const box = $('killFeed');
+  if (!box) return;
+  box.innerHTML = '';
+  for (const ev of (list || []).slice(0, 4)) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    const cls = ev.type === 'liq' ? 'liq' : (ev.type === 'spoof' || ev.type === 'iceberg') ? 'wall' : ev.side;
+    btn.className = 'kf-pill ' + cls;
+    const d = new Date(ev.ts);
+    const tm = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    btn.textContent = `${tm} · ${ev.label}`;
+    btn.addEventListener('click', () => {
+      battle.replayEvent(ev);
+      if (ev.ts) klineChart.highlightTs(ev.ts);
+    });
+    box.appendChild(btn);
+  }
+}
+battle.onFeedUpdate = (list) => renderKillFeed(list);
+
+battle.onHover = (info) => {
+  const tip = $('battleTip'), card = $('battleCard');
+  if (!tip || !card) return;
+  if (!info) { tip.hidden = true; return; }
+  let title = '', sub = '';
+  if (info.kind === 'shield') {
+    title = T('tipShield', info.side);
+    sub = T('tipShieldSub', Math.round((info.str || 0) * 100), info.usd > 0 ? fmtUsd(info.usd) : '--', info.alert || 0);
+  } else if (info.kind === 'wall') {
+    title = T('tipWall', info.side, '$' + Math.round(info.price).toLocaleString('en-US'));
+    sub = T('tipWallSub', fmtUsd(info.usd), `${info.distPct >= 0 ? '+' : ''}${info.distPct.toFixed(2)}%`);
+  } else if (info.kind === 'line') {
+    const pctStr = `${info.pct > 0 ? '+' : ''}${info.pct}%`;
+    const pxStr = '$' + Math.round(info.price).toLocaleString('en-US');
+    title = T('tipLine', pctStr, pxStr);
+    sub = T('tipLineSub', T(info.state === 'captured' ? 'lineCaptured' : 'lineIntact'), info.wallUsd > 0 ? fmtUsd(info.wallUsd) : '--', info.breachCount || 0);
+  }
+  tip.innerHTML = `<b>${title}</b><span>${sub}</span>`;
+  tip.hidden = false;
+  const cw = card.clientWidth || 800, ch = card.clientHeight || 400;
+  const tw = tip.offsetWidth || 180, th = tip.offsetHeight || 54;
+  tip.style.left = Math.max(8, Math.min(cw - tw - 8, info.x + 14)) + 'px';
+  tip.style.top = Math.max(8, Math.min(ch - th - 8, info.y - th - 10)) + 'px';
+};
 
 // ---------- 多层价格防线间距切换 ----------
 const DEF_KEY = 'cw_def_step';
@@ -445,6 +632,7 @@ function closeDefPop() {
 if (defBtn) {
   defBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    closeDemoPop();
     const open = defPop.hidden;
     defPop.hidden = !open;
     defBtn.setAttribute('aria-expanded', open);
@@ -510,8 +698,27 @@ setInterval(() => {
   if ($('trades').querySelector('.empty')) renderTrades(); else tradesNote();
 }, 1000);
 
-// ---------- 多周期涨跌矩阵 ----------
-const mtf = new MtfTracker({ onData: () => { renderMtf(); syncDefense(computeDepth()); } });
+// ---------- 多周期涨跌矩阵 & CME 缺口 ----------
+const mtf = new MtfTracker({ onData: () => { renderMtf(); renderCmeGap(); syncDefense(computeDepth()); } });
+function renderCmeGap() {
+  const valEl = $('cmeGapVal'), subEl = $('cmeGapSub');
+  if (!valEl || !subEl) return;
+  const g = mtf.getCmeGap(S.last);
+  if (!g) {
+    valEl.textContent = T('cmeGapNone');
+    subEl.textContent = ''; subEl.className = 'cme-s';
+    return;
+  }
+  valEl.textContent = `$${Math.round(g.lo).toLocaleString('en-US')}–$${Math.round(g.hi).toLocaleString('en-US')}`;
+  if (g.filled) {
+    subEl.textContent = T('cmeGapFilled');
+    subEl.className = 'cme-s filled';
+  } else {
+    const dp = g.distPct != null ? `${g.distPct >= 0 ? '+' : ''}${g.distPct.toFixed(2)}%` : '--';
+    subEl.textContent = T('cmeGapOpen', dp, Math.round(g.fillPct));
+    subEl.className = 'cme-s';
+  }
+}
 function renderMtf() {
   if (document.hidden) return;
   const res = mtf.compute(S.last);
@@ -527,6 +734,7 @@ function renderMtf() {
       cell.className = 'mtf-cell';
     }
   }
+  renderCmeGap();
 }
 
 // ---------- 恐慌与贪婪指数 + 全球交易时段 ----------
@@ -614,23 +822,102 @@ function setRatio(prefix, a, b, la, lb, fmtA, fmtB, note = '') {
   return tot ? pa * 2 - 1 : 0;
 }
 
-// ---------- 盘口深度 ----------
+// ---------- 盘口深度 & 巨鲸墙微操取证 ----------
+const prevBigWalls = new Map();
+const wallCooldown = new Map();
+function checkWallForensics(mid, bidBuckets, askBuckets) {
+  if (!(mid > 0)) return;
+  const now = Date.now();
+  const curMap = new Map();
+  for (const [bp, usd] of bidBuckets) if (usd >= 300000) curMap.set('blue-' + bp, { side: 'blue', price: bp, usd });
+  for (const [ap, usd] of askBuckets) if (usd >= 300000) curMap.set('red-' + ap, { side: 'red', price: ap, usd });
+
+  // 1. 虚晃撤单检测 (Spoofing Pull)
+  for (const [key, prev] of prevBigWalls) {
+    if (prev.usd < 1500000 || now - prev.ts > 2500) continue;
+    const bMap = prev.side === 'blue' ? bidBuckets : askBuckets;
+    const curUsd = (bMap.get(prev.price) || 0) + (bMap.get(prev.price - 100) || 0) + (bMap.get(prev.price + 100) || 0);
+    if (curUsd < prev.usd * 0.35) {
+      const crossed = prev.side === 'blue' ? mid < prev.price : mid > prev.price;
+      let oppVol = 0;
+      for (const t of S.recentTakers) {
+        if (now - t.ts <= 3000 && t.side === (prev.side === 'blue' ? 'sell' : 'buy') && Math.abs(t.price - prev.price) / prev.price < 0.0012) oppVol += t.usd;
+      }
+      const lastCd = wallCooldown.get('sp-' + key) || 0;
+      if (!crossed && oppVol < prev.usd * 0.25 && now - lastCd > 12000) {
+        wallCooldown.set('sp-' + key, now);
+        battle.triggerWallEvent('spoof', { side: prev.side, price: prev.price, usd: prev.usd });
+      }
+    }
+  }
+
+  // 2. 冰山护盾吸收检测 (Iceberg Absorption)
+  for (const [key, cur] of curMap) {
+    if (Math.abs(cur.price - mid) / mid > 0.0018) continue;
+    let oppVol = 0;
+    for (const t of S.recentTakers) {
+      if (now - t.ts <= 10000 && t.side === (cur.side === 'blue' ? 'sell' : 'buy') && Math.abs(t.price - cur.price) / cur.price < 0.0008) oppVol += t.usd;
+    }
+    const prev = prevBigWalls.get(key);
+    const held = prev ? cur.usd >= prev.usd * 0.85 : cur.usd >= 300000;
+    const notBroken = cur.side === 'blue' ? mid >= cur.price - 50 : mid <= cur.price + 50;
+    const lastCd = wallCooldown.get('ib-' + key) || 0;
+    if (oppVol >= 600000 && held && notBroken && now - lastCd > 15000) {
+      wallCooldown.set('ib-' + key, now);
+      battle.triggerWallEvent('iceberg', { side: cur.side, price: cur.price, usd: oppVol });
+    }
+  }
+
+  prevBigWalls.clear();
+  for (const [k, v] of curMap) prevBigWalls.set(k, { ...v, ts: now });
+}
+
+function renderWallList(wallsB, wallsA) {
+  const el = $('wallList');
+  if (!el) return;
+  const col = (arr, cls) => {
+    if (!arr.length) return `<div class="wall-col"><div class="wall-item ${cls}"><small>${T('wallEmpty')}</small></div></div>`;
+    return '<div class="wall-col">' + arr.map(w =>
+      `<div class="wall-item ${cls}"><span>$${Math.round(w.price).toLocaleString('en-US')}</span><b>${fmtUsd(w.usd)}</b><small>${w.distPct >= 0 ? '+' : ''}${w.distPct.toFixed(2)}%</small></div>`
+    ).join('') + '</div>';
+  };
+  el.innerHTML = col(wallsB, 'b') + col(wallsA, 'a');
+}
+
 function computeDepth() {
   const b = S.book; if (!b || !b.ready) return null;
   const bb = b.bestBid(), ba = b.bestAsk(); if (!isFinite(bb) || !isFinite(ba) || bb >= ba * 1.01) return null;
   const mid = (bb + ba) / 2, NB = 50, bins = { bid: new Float64Array(NB), ask: new Float64Array(NB) };
-  let b05 = 0, a05 = 0, b1 = 0, a1 = 0, minB = Infinity, maxA = 0;
+  let b05 = 0, a05 = 0, b1 = 0, a1 = 0, b2 = 0, a2 = 0, minB = Infinity, maxA = 0;
+  const bidBuckets = new Map(), askBuckets = new Map();
   for (const [p, q] of b.bids) {
     if (p < minB) minB = p;
-    const d = (mid - p) / mid; if (d < 0 || d > 0.01) continue;
-    const u = p * q; b1 += u; if (d <= 0.005) b05 += u; bins.bid[Math.min(NB - 1, (d / 0.01 * NB) | 0)] += u;
+    const d = (mid - p) / mid; if (d < 0 || d > 0.035) continue;
+    const u = p * q;
+    if (d <= 0.02) b2 += u;
+    if (d <= 0.01) { b1 += u; bins.bid[Math.min(NB - 1, (d / 0.01 * NB) | 0)] += u; }
+    if (d <= 0.005) b05 += u;
+    const bk = Math.round(p / 100) * 100;
+    bidBuckets.set(bk, (bidBuckets.get(bk) || 0) + u);
   }
   for (const [p, q] of b.asks) {
     if (p > maxA) maxA = p;
-    const d = (p - mid) / mid; if (d < 0 || d > 0.01) continue;
-    const u = p * q; a1 += u; if (d <= 0.005) a05 += u; bins.ask[Math.min(NB - 1, (d / 0.01 * NB) | 0)] += u;
+    const d = (p - mid) / mid; if (d < 0 || d > 0.035) continue;
+    const u = p * q;
+    if (d <= 0.02) a2 += u;
+    if (d <= 0.01) { a1 += u; bins.ask[Math.min(NB - 1, (d / 0.01 * NB) | 0)] += u; }
+    if (d <= 0.005) a05 += u;
+    const bk = Math.round(p / 100) * 100;
+    askBuckets.set(bk, (askBuckets.get(bk) || 0) + u);
   }
-  return { bb, ba, mid, b05, a05, b1, a1, bins, cover: Math.min((mid - minB) / mid, (maxA - mid) / mid) };
+  const top = (mp, side) => [...mp.entries()]
+    .filter(([, usd]) => usd >= 300000)
+    .sort((x, y) => y[1] - x[1])
+    .slice(0, 3)
+    .map(([price, usd]) => ({ side, price, usd, distPct: ((price - mid) / mid) * 100 }));
+  const wallsB = top(bidBuckets, 'blue'), wallsA = top(askBuckets, 'red');
+  checkWallForensics(mid, bidBuckets, askBuckets);
+  return { bb, ba, mid, b05, a05, b1, a1, b2, a2, wallsB, wallsA, cover: Math.min((mid - minB) / mid, (maxA - mid) / mid), bins };
 }
 
 // ---------- 小图表 ----------
@@ -640,31 +927,80 @@ function prepCanvas(cv) {
   const x = cv.getContext('2d'); x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, r.width, r.height);
   return [x, r.width, r.height];
 }
+function drawPremSpark(hist) {
+  const cv = $('premSpark'); if (!cv) return;
+  const [x, W, H] = prepCanvas(cv);
+  if (!hist || hist.length < 2) return;
+  let mx = 5;
+  for (const pt of hist) mx = Math.max(mx, Math.abs(pt.v));
+  const mid = H / 2;
+  x.strokeStyle = 'rgba(255,255,255,0.14)'; x.lineWidth = 1;
+  x.beginPath(); x.moveTo(0, mid); x.lineTo(W, mid); x.stroke();
+  const last = hist[hist.length - 1].v;
+  x.strokeStyle = last >= 0 ? '#60a5fa' : '#f87171';
+  x.lineWidth = 1.5; x.beginPath();
+  hist.forEach((pt, i) => {
+    const px = (i / (hist.length - 1)) * W;
+    const py = mid - (pt.v / mx) * (mid - 3);
+    if (i === 0) x.moveTo(px, py); else x.lineTo(px, py);
+  });
+  x.stroke();
+}
 function drawFlow() {
   const [x, W, H] = prepCanvas($('flowChart'));
-  const now = Math.floor(Date.now() / 1000), N = 60, step = 2, bars = [];
+  const srcArr = flowScope === 'agg' ? S.aggBuckets : S.buckets;
+  const bars = [], pPts = [];
   let mx = 1;
-  for (let i = N - 1; i >= 0; i--) {
-    let bu = 0, su = 0;
-    for (let j = 0; j < step; j++) { const s = now - i * step - j, k = S.buckets[((s % 300) + 300) % 300]; if (k.sec === s) { bu += k.bu; su += k.su; } }
-    bars.push([bu, su]); mx = Math.max(mx, bu, su);
+  if (flowWin === '15m') {
+    const nowBin = Math.floor(Date.now() / 10000), N = 90;
+    for (let i = N - 1; i >= 0; i--) {
+      const bin = nowBin - i, slot = S.agg10s[((bin % 90) + 90) % 90];
+      const bu = slot.bin === bin ? slot.bu : 0, su = slot.bin === bin ? slot.su : 0;
+      const p = slot.bin === bin && slot.p > 0 ? slot.p : 0;
+      bars.push([bu, su]); pPts.push(p); mx = Math.max(mx, bu, su);
+    }
+  } else {
+    const now = Math.floor(Date.now() / 1000), N = 60, step = 2;
+    for (let i = N - 1; i >= 0; i--) {
+      let bu = 0, su = 0, p = 0;
+      for (let j = 0; j < step; j++) {
+        const s = now - i * step - j, k = srcArr[((s % 300) + 300) % 300];
+        if (k.sec === s) { bu += k.bu; su += k.su; }
+        const ph = S.px[((s % 120) + 120) % 120];
+        if (ph.sec === s && ph.p > 0) p = ph.p;
+      }
+      bars.push([bu, su]); pPts.push(p); mx = Math.max(mx, bu, su);
+    }
   }
-  const mid = H / 2, bw = W / N;
+  const N = bars.length, mid = H / 2, bw = W / N;
   x.fillStyle = 'rgba(255,255,255,0.08)'; x.fillRect(0, mid, W, 1);
   let cum = 0; const cumPts = [];
   bars.forEach(([bu, su], i) => {
     const hb = Math.sqrt(bu / mx) * (mid - 4), hs = Math.sqrt(su / mx) * (mid - 4);
     let g = x.createLinearGradient(0, mid - hb, 0, mid); g.addColorStop(0, '#93c5fd'); g.addColorStop(1, '#1d4ed8');
-    x.fillStyle = g; x.fillRect(i * bw + 1, mid - hb, bw - 2, hb);
+    x.fillStyle = g; x.fillRect(i * bw + 0.5, mid - hb, Math.max(1, bw - 1.5), hb);
     g = x.createLinearGradient(0, mid, 0, mid + hs); g.addColorStop(0, '#b91c1c'); g.addColorStop(1, '#fca5a5');
-    x.fillStyle = g; x.fillRect(i * bw + 1, mid + 1, bw - 2, hs);
+    x.fillStyle = g; x.fillRect(i * bw + 0.5, mid + 1, Math.max(1, bw - 1.5), hs);
     cum += bu - su; cumPts.push(cum);
   });
   const cm = Math.max(1, ...cumPts.map(Math.abs));
-  x.strokeStyle = '#fbbf24'; x.lineWidth = 1.8; x.shadowColor = '#fbbf24'; x.shadowBlur = 6; x.beginPath();
+  x.strokeStyle = '#fbbf24'; x.lineWidth = 1.8; x.shadowColor = '#fbbf24'; x.shadowBlur = 5; x.beginPath();
   cumPts.forEach((c, i) => { const y = mid - (c / cm) * (mid - 6); i ? x.lineTo(i * bw + bw / 2, y) : x.moveTo(bw / 2, y); });
   x.stroke(); x.shadowBlur = 0;
-  x.fillStyle = 'rgba(230,235,255,.5)'; x.font = '10px -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif'; x.fillText(T('flowCap'), 6, 12);
+  // 叠加价格线用于背离对照
+  const validP = pPts.filter(v => v > 0);
+  if (validP.length >= 2) {
+    const pMin = Math.min(...validP), pMax = Math.max(...validP), pSpan = Math.max(1, pMax - pMin);
+    x.strokeStyle = 'rgba(255,255,255,0.68)'; x.lineWidth = 1.15; x.beginPath();
+    let started = false;
+    pPts.forEach((p, i) => {
+      if (!(p > 0)) return;
+      const y = (H - 6) - ((p - pMin) / pSpan) * (H - 12);
+      const px = i * bw + bw / 2;
+      if (!started) { x.moveTo(px, y); started = true; } else x.lineTo(px, y);
+    });
+    x.stroke();
+  }
 }
 function drawDepth(d) {
   const [x, W, H] = prepCanvas($('depthChart'));
@@ -750,7 +1086,48 @@ function syncDefense(depth = null) {
     : (+defStepMode || 1);
   const wallMap = depth && S.book ? computeDefenseWalls(S.book, anchor, previewStep) : null;
   battle.setDefenseState({ anchor, anchorType, price: S.last, stepMode: defStepMode, wallMap });
+  const zones = estimateLiqZones(klineChart.candles, S.last);
+  battle.setLiqZones(zones);
+  klineChart.setOverlays({ anchor, step: battle.def.step || previewStep, liqZones: zones });
 }
+
+// ---------- 吃单范围/窗口 & 战力模式切换 ----------
+const flowScopeBtn = $('flowScope'), flowWinBtn = $('flowWin'), powModeBtn = $('powModeBtn');
+function renderFlowControls() {
+  if (flowScopeBtn) {
+    flowScopeBtn.textContent = T(flowScope === 'agg' ? 'flowAgg' : 'flowSingle');
+    flowScopeBtn.classList.toggle('on', flowScope === 'agg');
+  }
+  if (flowWinBtn) {
+    flowWinBtn.textContent = flowWin;
+    flowWinBtn.classList.toggle('on', flowWin === '15m');
+  }
+  const cap = $('flowCap');
+  if (cap) cap.textContent = T(flowWin === '15m' ? 'flowCap15' : 'flowCap');
+}
+if (flowScopeBtn) flowScopeBtn.addEventListener('click', () => {
+  flowScope = flowScope === 'agg' ? 'single' : 'agg';
+  lsSet('cw_flow_scope', flowScope);
+  renderFlowControls();
+  refresh();
+});
+if (flowWinBtn) flowWinBtn.addEventListener('click', () => {
+  flowWin = flowWin === '2m' ? '15m' : '2m';
+  lsSet('cw_flow_win', flowWin);
+  renderFlowControls();
+  drawFlow();
+});
+function renderPowModeUi() {
+  if (!powModeBtn) return;
+  powModeBtn.textContent = T(powMode === '5d' ? 'pow5d' : 'powFast');
+  powModeBtn.classList.toggle('fast', powMode === 'fast');
+}
+if (powModeBtn) powModeBtn.addEventListener('click', () => {
+  powMode = powMode === '5d' ? 'fast' : '5d';
+  lsSet('cw_pow_mode', powMode);
+  renderPowModeUi();
+  refresh();
+});
 
 // ---------- 战力 & 刷新 ----------
 let smoothS = 0, musicI = 0.15, musicBpm = 80, musicMood = 0;
@@ -761,7 +1138,8 @@ function refresh() {
   const dt = S.lastRefreshAt ? Math.min((now - S.lastRefreshAt) / 1000, 1) : 0;
   S.lastRefreshAt = now;
   const C = M.base;
-  const w10 = windowSum(10), w60 = windowSum(60), w300 = windowSum(300);
+  const srcBuckets = flowScope === 'agg' ? S.aggBuckets : S.buckets;
+  const w10 = windowSum(10, srcBuckets), w60 = windowSum(60, srcBuckets), w300 = windowSum(300, srcBuckets);
   const f = (q, u) => `${fmtQ(q)} ${C} · ${fmtUsd(u)}`;
   const cov = S.since ? Math.floor(Date.now() / 1000) - S.since + 1 : 0;
   const nt = (n) => cov < n ? T('only', cov) : '';
@@ -773,21 +1151,65 @@ function refresh() {
   de.textContent = (dl >= 0 ? '+' : '-') + fmtUsd(Math.abs(dl)) + ` (${dq >= 0 ? '+' : '-'}${fmtQ(Math.abs(dq))} ${C})`;
   de.className = dl >= 0 ? 'c-blue' : 'c-red';
 
+  // 价格 vs 现货 CVD 5 分钟背离检测
+  const w300Agg = windowSum(300, S.aggBuckets);
+  const ch5m = mtf.compute(S.last)['5m'];
+  const aggCvd = w300Agg.bu - w300Agg.su, aggTot = w300Agg.bu + w300Agg.su;
+  const aggShare = aggTot > 0 ? w300Agg.bu / aggTot : 0.5;
+  if (ch5m != null && ch5m <= -0.12 && aggCvd >= 1200000 && aggShare >= 0.54) S.cvdDiv = 'bull';
+  else if (ch5m != null && ch5m >= 0.12 && aggCvd <= -1200000 && aggShare <= 0.46) S.cvdDiv = 'bear';
+  else S.cvdDiv = null;
+  const divEl = $('cvdDiv');
+  if (divEl) {
+    if (S.cvdDiv) {
+      divEl.hidden = false;
+      divEl.className = 'cvd-div ' + S.cvdDiv;
+      divEl.textContent = T(S.cvdDiv === 'bull' ? 'cvdDivBull' : 'cvdDivBear');
+    } else {
+      divEl.hidden = true;
+    }
+  }
+
   const d = computeDepth(); let ib = 0;
   if (d) {
     const cv = (r) => d.cover < r ? T('cover', (d.cover * 100).toFixed(2)) : '';
     ib = setRatio('bk05', d.b05, d.a05, 'bid', 'ask', T('bid') + ' ' + fmtUsd(d.b05), T('ask') + ' ' + fmtUsd(d.a05), cv(0.0049));
     setRatio('bk1', d.b1, d.a1, 'bid', 'ask', T('bid') + ' ' + fmtUsd(d.b1), T('ask') + ' ' + fmtUsd(d.a1), cv(0.0099));
+    setRatio('bk2', d.b2, d.a2, 'bid', 'ask', T('bid') + ' ' + fmtUsd(d.b2), T('ask') + ' ' + fmtUsd(d.a2), cv(0.0199));
     $('bb').textContent = fmtP(d.bb); $('ba').textContent = fmtP(d.ba); $('spr').textContent = fmtP(d.ba - d.bb);
+    renderWallList(d.wallsB, d.wallsA);
+    battle.setOrderWalls([...d.wallsB, ...d.wallsA]);
   }
   drawDepth(d); drawFlow();
   syncBattleAtmo(d);
 
-  // ===== BTC 战力模型（全部来自实时行情，无随机）=====
+  // ===== BTC 五维战力模型（全部来自实时行情，无随机）=====
   const ch10 = priceChange(10), ch60 = priceChange(60);
   const p10 = Math.tanh(ch10 / 0.03), p60 = Math.tanh(ch60 / 0.10);
-  const raw = 0.25 * p10 + 0.25 * p60 + 0.15 * i10 + 0.15 * i60 + 0.2 * ib;
+  const cPrice = 0.5 * p10 + 0.5 * p60;
+  const cTaker = 0.5 * i10 + 0.5 * i60;
+  const cBook = ib;
+
+  let cPerp = null;
+  if (perpState.available) {
+    const tkBias = perpState.perpTakerRatio != null ? Math.tanh((perpState.perpTakerRatio - 1) * 3) : null;
+    const liqBias = perpState.hasLiqStream ? Math.tanh(((perpState.liqShort5m || 0) - (perpState.liqLong5m || 0)) / 250000) : null;
+    if (tkBias != null && liqBias != null) cPerp = 0.55 * tkBias + 0.45 * liqBias;
+    else if (tkBias != null) cPerp = tkBias;
+    else if (liqBias != null) cPerp = liqBias;
+  }
+  const cPrem = (cxState && cxState.cbPremUsd != null && isFinite(cxState.cbPremUsd)) ? Math.tanh(cxState.cbPremUsd / 60) : null;
+
+  let wPrice = 0.50, wTaker = 0.30, wBook = 0.20, wPerp = 0, wPrem = 0;
+  if (powMode === '5d') {
+    wPrice = 0.34; wTaker = 0.24; wBook = 0.16;
+    wPerp = cPerp != null ? 0.16 : 0;
+    wPrem = cPrem != null ? 0.10 : 0;
+  }
+  const wSum = wPrice + wTaker + wBook + wPerp + wPrem || 1;
+  const raw = (wPrice * cPrice + wTaker * cTaker + wBook * cBook + wPerp * (cPerp || 0) + wPrem * (cPrem || 0)) / wSum;
   smoothS = smoothS * 0.6 + raw * 0.4;
+
   const ref = cfg().th.shell * 4;
   battle.setActivity(w10.bu / ref, w10.su / ref);
 
@@ -800,14 +1222,24 @@ function refresh() {
   musicMood = 0.7 * (0.5 * p10 + 0.5 * p60) + 0.3 * smoothS;
   audio.update({ intensity: S.surge ? Math.max(musicI, 0.85) : musicI, bias: musicMood, surge: S.surge, bpm: S.surge ? Math.max(124, musicBpm) : musicBpm });
   updateMusicInd();
-  S.dbg = { src: S.src, since: S.since, musicI, musicBpm, musicMood, t: Date.now(), price: S.last, ch10, ch60, p10, p60, i10, i60, ib, raw, s: smoothS, front: battle.front, target: battle.frontTarget, actB: w10.bu / ref, actR: w10.su / ref, w10, w60, w300, th: CF.th };
-  const pc = (v) => `<b class="${v >= 0 ? 'c-blue' : 'c-red'}">${v >= 0 ? '+' : ''}${v.toFixed(3)}%</b>`;
-  const rt = (v) => { const b = Math.round((v + 1) * 50); return `<b><span class="c-blue">${b}</span>:<span class="c-red">${100 - b}</span></b>`; };
-  const bi = (x) => `<span class="bi">${x}</span>`;
-  $('basis').innerHTML = T('basis') + [
-    `${T('b10')} ${pc(ch10)}`, `${T('b60')}${cov < 60 ? T('bOnly', cov) : ''} ${pc(ch60)}`,
-    `${T('bLast')} ${S.tickDir > 0 ? '<b class="c-blue">↑</b>' : S.tickDir < 0 ? '<b class="c-red">↓</b>' : '–'}`,
-    `${T('bTk')} ${rt(i60)}`, `${T('bBk')} ${rt(ib)}`].map(bi).join(' · ');
+  S.dbg = { src: S.src, since: S.since, musicI, musicBpm, musicMood, t: Date.now(), price: S.last, ch10, ch60, p10, p60, i10, i60, ib, cPerp, cPrem, raw, s: smoothS, front: battle.front, target: battle.frontTarget, actB: w10.bu / ref, actR: w10.su / ref, w10, w60, w300, th: CF.th };
+
+  const chip = (label, v, txt) => {
+    const cls = v == null ? '' : v > 0.06 ? 'pos' : v < -0.06 ? 'neg' : '';
+    const vCls = v == null ? '' : v >= 0 ? 'c-blue' : 'c-red';
+    return `<span class="b-chip ${cls}">${label} <b class="${vCls}">${txt}</b></span>`;
+  };
+  const ratioStr = (v) => { const b = Math.round((v + 1) * 50); return `${b}:${100 - b}`; };
+  const premTxt = cxState && cxState.cbPremUsd != null ? `${cxState.cbPremUsd >= 0 ? '+' : '-'}$${Math.abs(cxState.cbPremUsd).toFixed(0)}` : '--';
+  const perpTxt = cPerp != null ? `${cPerp >= 0 ? '+' : ''}${Math.round(cPerp * 100)}` : '--';
+  $('basis').innerHTML = [
+    chip(T('bPrice'), cPrice, `${ch60 >= 0 ? '+' : ''}${ch60.toFixed(2)}%`),
+    chip(T('bCvd'), cTaker, ratioStr(i60)),
+    chip(T('bBook'), cBook, ratioStr(ib)),
+    powMode === '5d' ? chip(T('bPerp'), cPerp, perpTxt) : '',
+    powMode === '5d' ? chip(T('bPrem'), cPrem, premTxt) : '',
+  ].filter(Boolean).join('');
+
   const s = smoothS, blueShare = 0.5 + 0.5 * s;
   battle.setMomentum(s);
   syncDefense(d);
@@ -988,6 +1420,23 @@ function renderLsBar(lr, sr, ratio, txtId, bId, rId) {
     $(rId).style.width = '50%';
   }
 }
+const liqWinBtns = [...document.querySelectorAll('#liqWinTabs button[data-lwin]')];
+function renderLiqWinTabs() {
+  liqWinBtns.forEach((b) => {
+    const on = b.dataset.lwin === liqWin;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on);
+  });
+  const tEl = $('perpLiqTitle');
+  if (tEl) tEl.textContent = T('perpLiqW', liqWin);
+}
+liqWinBtns.forEach((b) => b.addEventListener('click', () => {
+  liqWin = b.dataset.lwin;
+  lsSet('cw_liq_win', liqWin);
+  renderLiqWinTabs();
+  renderPerp();
+}));
+
 function renderPerp() {
   const card = $('perpCard'); if (!card) return;
   const st = perpState;
@@ -996,33 +1445,60 @@ function renderPerp() {
   srcEl.textContent = st.available ? `${SOURCES[st.src]?.name || st.src} · ${st.symbol}` : T('perpNone');
   srcEl.classList.toggle('on', !!st.available);
 
-  const fEl = $('perpFund');
+  const reg = computeRegime(mtf.compute(S.last)['5m'], st.oiChg5m);
+  st.regime = reg;
+  const regEl = $('perpRegime');
+  if (regEl) {
+    if (reg) {
+      regEl.hidden = false;
+      regEl.className = 'regime-pill ' + reg;
+      regEl.textContent = T('reg_' + reg);
+    } else {
+      regEl.hidden = true;
+    }
+  }
+
+  const fEl = $('perpFund'), aprEl = $('perpApr');
   if (st.available && st.funding != null && isFinite(st.funding)) {
     const pct = st.funding * 100;
     fEl.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(4)}%`;
     fEl.className = 'perp-v ' + (pct > 0 ? 'pos' : pct < 0 ? 'neg' : '');
     $('perpNext').textContent = st.nextFunding > Date.now() ? T('perpNext', fmtCountdown(st.nextFunding)) : '--';
+    if (aprEl) {
+      aprEl.textContent = st.fundingApr != null ? T('perpApr', st.fundingApr) : '';
+      aprEl.className = 'perp-s ' + (pct > 0 ? 'pos' : pct < 0 ? 'neg' : '');
+    }
   } else {
     fEl.textContent = '--'; fEl.className = 'perp-v'; $('perpNext').textContent = '--';
+    if (aprEl) { aprEl.textContent = ''; aprEl.className = 'perp-s'; }
   }
 
   renderBasisMetric();
 
+  const oiDelEl = $('perpOiDelta');
   if (st.available && st.oiUsd > 0) {
     $('perpOi').textContent = fmtUsd(st.oiUsd);
     $('perpOiQty').textContent = st.oiQty > 0 ? `${fmtQ(st.oiQty)} BTC` : '--';
+    if (oiDelEl) {
+      const fCh = (v) => v != null && isFinite(v) ? `${v >= 0 ? '+' : ''}${v.toFixed(2)}%` : '--';
+      oiDelEl.textContent = T('perpOiDelta', fCh(st.oiChg5m), fCh(st.oiChg1h));
+      oiDelEl.className = 'perp-s ' + (st.oiChg1h > 0 ? 'pos' : st.oiChg1h < 0 ? 'neg' : '');
+    }
   } else {
     $('perpOi').textContent = '--'; $('perpOiQty').textContent = '--';
+    if (oiDelEl) { oiDelEl.textContent = ''; oiDelEl.className = 'perp-s'; }
   }
 
   renderLsBar(st.topLongRatio, st.topShortRatio, st.topLsRatio, 'perpTopLs', 'perpTopLsB', 'perpTopLsR');
   renderLsBar(st.longRatio, st.shortRatio, st.lsRatio, 'perpLs', 'perpLsB', 'perpLsR');
+  renderLsBar(st.perpTakerBuyRatio, st.perpTakerSellRatio, st.perpTakerRatio, 'perpTkLs', 'perpTkLsB', 'perpTkLsR');
 
   const lqEl = $('perpLiq'), lqSub = $('perpLiqSub'), lastEl = $('perpLastLiq');
+  const wStat = (st.liqStats && st.liqStats[liqWin]) || { l: st.liqLong5m || 0, s: st.liqShort5m || 0 };
   if (st.hasLiqStream) {
-    const tot = (st.liqLong5m || 0) + (st.liqShort5m || 0);
+    const tot = (wStat.l || 0) + (wStat.s || 0);
     lqEl.textContent = fmtUsd(tot);
-    lqSub.textContent = tot > 0 ? T('perpLiqPair', fmtUsd(st.liqLong5m || 0), fmtUsd(st.liqShort5m || 0)) : T('perpLiqWait');
+    lqSub.textContent = tot > 0 ? T('perpLiqPair', fmtUsd(wStat.l || 0), fmtUsd(wStat.s || 0)) : T('perpLiqWait');
   } else {
     lqEl.textContent = '--';
     lqSub.textContent = st.available ? T('perpLiqNa') : '--';
@@ -1033,6 +1509,14 @@ function renderPerp() {
   } else {
     lastEl.textContent = ''; lastEl.className = 'perp-last';
   }
+
+  const h = st.wsHealth || {};
+  document.querySelectorAll('#liqSrc .ex-dot').forEach((el) => {
+    const ex = el.dataset.ex;
+    const on = !!h[ex];
+    el.classList.toggle('on', on);
+    el.classList.toggle('idle', !on && st.available);
+  });
   renderLiqFeed();
 }
 
@@ -1048,6 +1532,9 @@ const futures = new FuturesFeed({
     if (ev.usd >= minFx && (now - lastLiqFx >= 180 || ev.usd >= th.heavy)) {
       lastLiqFx = now;
       battle.liquidate(ev.side, ev.usd);
+    }
+    if (ev.usd >= th.shell) {
+      klineChart.addMarker({ ts: ev.ts || now, price: ev.price || S.last, type: 'liq', side: ev.side === 'long' ? 'blue' : 'red', usd: ev.usd });
     }
     if (ev.usd >= minSfx) {
       audio.impact(ev.usd * 50000 / th.shell, ev.side === 'long' ? 'red' : 'blue');
@@ -1066,8 +1553,10 @@ setInterval(() => {
 
 // ---------- 一键战报分享 ----------
 initShare(() => {
-  const w60 = windowSum(60), w300 = windowSum(300);
+  const srcBuckets = flowScope === 'agg' ? S.aggBuckets : S.buckets;
+  const w60 = windowSum(60, srcBuckets), w300 = windowSum(300, srcBuckets);
   const bp = Math.round((0.5 + 0.5 * smoothS) * 100);
+  const s1h = perpState.liqStats && perpState.liqStats['1h'];
   return {
     coin: M.base,
     pair: $('pair').textContent,
@@ -1083,6 +1572,11 @@ initShare(() => {
     tk5mNet: w300.bu - w300.su,
     bk05: computeDepth(),
     perp: perpState,
+    regime: perpState.regime || computeRegime(mtf.compute(S.last)['5m'], perpState.oiChg5m),
+    oiChg1h: perpState.oiChg1h,
+    cvdDiv: S.cvdDiv,
+    liq1h: s1h ? (s1h.l + s1h.s) : 0,
+    cmeGap: mtf.getCmeGap(S.last),
     cbPremUsd: cxState ? cxState.cbPremUsd : null,
     cbPremPct: cxState ? cxState.cbPremPct : null,
     fng: fngState,
@@ -1092,8 +1586,10 @@ initShare(() => {
 // ---------- 语言切换 ----------
 document.querySelectorAll('[data-lang]').forEach(b => b.onclick = (e) => { e.stopPropagation(); setLang(b.dataset.lang); });
 onLang(() => {
-  renderChips(); renderTrades(); statusText(); updateMusicInd(); refresh();
-  renderPerp(); renderCrossEx(); renderFng(); renderSession(); renderSourceUi(); renderDefUi(); klineChart.draw();
+  renderChips(); renderTrades(); statusText(); updateMusicInd();
+  renderFlowControls(); renderPowModeUi(); renderLiqWinTabs(); renderTheaterUi();
+  refresh(); renderPerp(); renderCrossEx(); renderFng(); renderSession(); renderCmeGap();
+  renderSourceUi(); renderDefUi(); renderKillFeed(); klineChart.draw();
   if (intro.isConnected) introMsg.textContent = T(...introKey);
   document.title = T('title', S.last ? `$${fmtP(S.last)} BTC` : 'BTC');
   requestAnimationFrame(fitHeader);
@@ -1105,9 +1601,14 @@ renderChips();
 renderTrades();
 renderSourceUi();
 renderDefUi();
+renderFlowControls();
+renderPowModeUi();
+renderLiqWinTabs();
+renderTheaterUi();
 $('pair').textContent = `${M.base}/USDT`;
 syncExActive();
 fm.start(sourceMode, M);
+multiSpot.start(sourceMode === 'auto' ? 'binance' : sourceMode);
 futures.start();
 klineChart.start();
 crossEx.start();
