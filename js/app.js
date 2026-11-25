@@ -1,12 +1,12 @@
-import { FeedManager, MultiSpotAggregator, SOURCES, BTC_MARKET, fetchBinance1s, fetchBinanceAggTrades, fetchOkxTrades, fetchCoinbaseTrades } from './feeds.js?v=3c4adee8';
-import { Battle } from './battle.js?v=3c4adee8';
-import { t as T, setLang, onLang, applyI18n, fmtUsd, fmtShort, fmtNum } from './i18n.js?v=3c4adee8';
-import { AudioController } from './music.js?v=3c4adee8';
-import { lsGet, lsSet } from './storage.js?v=3c4adee8';
-import { FuturesFeed, computeRegime, estimateLiqZones } from './futures.js?v=3c4adee8';
-import { KlineChart } from './chart.js?v=3c4adee8';
-import { CrossExchangeFeed, MtfTracker, fetchFearGreed, getTradingSession } from './intel.js?v=3c4adee8';
-import { initShare } from './share.js?v=3c4adee8';
+import { FeedManager, MultiSpotAggregator, SOURCES, BTC_MARKET, fetchBinance1s, fetchBinanceAggTrades, fetchOkxTrades, fetchCoinbaseTrades } from './feeds.js?v=9b14533c';
+import { Battle } from './battle.js?v=9b14533c';
+import { t as T, setLang, onLang, applyI18n, fmtUsd, fmtShort, fmtNum } from './i18n.js?v=9b14533c';
+import { AudioController } from './music.js?v=9b14533c';
+import { lsGet, lsSet } from './storage.js?v=9b14533c';
+import { FuturesFeed, computeRegime, estimateLiqZones } from './futures.js?v=9b14533c';
+import { KlineChart } from './chart.js?v=9b14533c';
+import { CrossExchangeFeed, MtfTracker, fetchFearGreed, getTradingSession } from './intel.js?v=9b14533c';
+import { initShare } from './share.js?v=9b14533c';
 
 const $ = (id) => document.getElementById(id);
 const pad = (n) => String(n).padStart(2, '0');
@@ -104,12 +104,16 @@ const S = {
   since: 0, liveSec: null, bfGen: 0, nEma: 0, cvdDiv: null,
   recentTakers: [],
 };
+const prevBigWalls = new Map();
+const wallCooldown = new Map();
+let prevBookRef = null;
 function resetStats() {
   for (const b of S.buckets) { b.sec = 0; b.b = b.s = b.bu = b.su = b.n = 0; }
   for (const x of S.px) { x.sec = 0; x.p = 0; } S.tickDir = 0;
   S.book = null; S.last = 0; S.shownStr = ''; lastShown = 0; S.open24h = 0; S.hi = 0; S.lo = 0; S.vol = 0;
   S.surge = null; S.surgeSince = 0; S.surgeHeld = 0; S.lastRefreshAt = 0; S.wonFor = null; smoothS = 0;
   S.since = 0; S.liveSec = null; S.bfGen++; S.nEma = 0;
+  prevBigWalls.clear(); wallCooldown.clear(); prevBookRef = null;
   $('price').textContent = '--'; $('chg').textContent = '--'; $('chg').className = 'chg';
   ['hi', 'lo', 'vol'].forEach(id => $(id).textContent = '--');
   S.big = []; S.bigFrom = 0; S.bigLoading = false; S.lastAggId = 0; S.lastTs = 0; pend = null; clearTimeout(pendTimer);
@@ -824,21 +828,39 @@ function setRatio(prefix, a, b, la, lb, fmtA, fmtB, note = '') {
 }
 
 // ---------- 盘口深度 & 巨鲸墙微操取证 ----------
-const prevBigWalls = new Map();
-const wallCooldown = new Map();
-function checkWallForensics(mid, bidBuckets, askBuckets) {
-  if (!(mid > 0)) return;
+function checkWallForensics(depth, book) {
+  if (!depth || !(depth.mid > 0) || !book || !book.ready) return;
+  const { mid, bidBuckets, askBuckets, minB, maxA } = depth;
   const now = Date.now();
   const curMap = new Map();
   for (const [bp, usd] of bidBuckets) if (usd >= 300000) curMap.set('blue-' + bp, { side: 'blue', price: bp, usd });
   for (const [ap, usd] of askBuckets) if (usd >= 300000) curMap.set('red-' + ap, { side: 'red', price: ap, usd });
 
+  if (book !== prevBookRef) {
+    prevBookRef = book;
+    prevBigWalls.clear();
+    for (const [k, v] of curMap) prevBigWalls.set(k, { ...v, ts: now });
+    return;
+  }
+
   // 1. 虚晃撤单检测 (Spoofing Pull)
   for (const [key, prev] of prevBigWalls) {
     if (prev.usd < 1500000 || now - prev.ts > 2500) continue;
+    const dist = prev.side === 'blue' ? (mid - prev.price) / mid : (prev.price - mid) / mid;
+    if (dist < 0 || dist > 0.025) continue;
+    const inBookRange = prev.side === 'blue'
+      ? (isFinite(minB) && minB < prev.price - 150)
+      : (isFinite(maxA) && maxA > prev.price + 150);
+    if (!inBookRange) continue;
     const bMap = prev.side === 'blue' ? bidBuckets : askBuckets;
     const curUsd = (bMap.get(prev.price) || 0) + (bMap.get(prev.price - 100) || 0) + (bMap.get(prev.price + 100) || 0);
     if (curUsd < prev.usd * 0.35) {
+      const rawSide = prev.side === 'blue' ? book.bids : book.asks;
+      let rawUsd = 0;
+      for (const [p, q] of rawSide) {
+        if (p >= prev.price - 150 && p <= prev.price + 150) rawUsd += p * q;
+      }
+      if (rawUsd >= prev.usd * 0.35) continue;
       const crossed = prev.side === 'blue' ? mid < prev.price : mid > prev.price;
       let oppVol = 0;
       for (const t of S.recentTakers) {
@@ -917,8 +939,7 @@ function computeDepth() {
     .slice(0, 3)
     .map(([price, usd]) => ({ side, price, usd, distPct: ((price - mid) / mid) * 100 }));
   const wallsB = top(bidBuckets, 'blue'), wallsA = top(askBuckets, 'red');
-  checkWallForensics(mid, bidBuckets, askBuckets);
-  return { bb, ba, mid, b05, a05, b1, a1, b2, a2, wallsB, wallsA, cover: Math.min((mid - minB) / mid, (maxA - mid) / mid), bins };
+  return { bb, ba, mid, b05, a05, b1, a1, b2, a2, wallsB, wallsA, minB, maxA, bidBuckets, askBuckets, cover: Math.min((mid - minB) / mid, (maxA - mid) / mid), bins };
 }
 
 // ---------- 小图表 ----------
@@ -1173,6 +1194,7 @@ function refresh() {
 
   const d = computeDepth(); let ib = 0;
   if (d) {
+    checkWallForensics(d, S.book);
     const cv = (r) => d.cover < r ? T('cover', (d.cover * 100).toFixed(2)) : '';
     ib = setRatio('bk05', d.b05, d.a05, 'bid', 'ask', T('bid') + ' ' + fmtUsd(d.b05), T('ask') + ' ' + fmtUsd(d.a05), cv(0.0049));
     setRatio('bk1', d.b1, d.a1, 'bid', 'ask', T('bid') + ' ' + fmtUsd(d.b1), T('ask') + ' ' + fmtUsd(d.a1), cv(0.0099));

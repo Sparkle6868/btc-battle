@@ -1,5 +1,5 @@
 // 中英文切换：?lang=zh|en > localStorage > 浏览器语言（zh* → 中文，其它 → 英文）
-import { lsGet, lsSet } from './storage.js?v=3c4adee8';
+import { lsGet, lsSet } from './storage.js?v=9b14533c';
 const KEY = 'cw_lang';
 export const escH = (x) => String(x).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 function detect() {
