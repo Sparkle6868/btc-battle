@@ -1,11 +1,13 @@
 // BTC 指挥室情报层：跨所三所报价与 Coinbase 溢价、多周期涨跌矩阵、恐慌贪婪指数、全球交易时段
-import { fetchJson, binFetch } from './net.js?v=8fcf62d3';
-import { lsGet, lsSet } from './storage.js?v=8fcf62d3';
+import { fetchJson, binFetch } from './net.js?v=3c4adee8';
+import { lsGet, lsSet } from './storage.js?v=3c4adee8';
 
 const BIN_HOSTS = ['https://api.binance.com', 'https://data-api.binance.vision'];
 const EX_STALE_MS = 30000;
 const EX_POLL_MS = 4000;
-const CB_STATS_MS = 60000;
+const EX_WS_STALE_MS = 8000;
+const EX_OPEN_MS = 60000;
+const EX_OPEN_RETRY_MS = 12000;
 const MTF_POLL_MS = 60000;
 const FNG_KEY = 'cw_fng_v1';
 const FNG_TTL = 3600e3;
@@ -18,7 +20,6 @@ export class CrossExchangeFeed {
       binance: { price: 0, chg: null, ts: 0 },
       okx: { price: 0, chg: null, ts: 0 },
       coinbase: { price: 0, chg: null, ts: 0 },
-      activeSrc: null,
       cbPremUsd: null,
       cbPremPct: null,
       okxSpreadUsd: null,
@@ -27,8 +28,11 @@ export class CrossExchangeFeed {
     };
     this.premHist = [];
     this.lastPremSampleAt = 0;
-    this.cbOpen = 0;
-    this.cbStatsAt = 0;
+    this.wsTs = { binance: 0, okx: 0, coinbase: 0 };
+    this.wsOpenTs = { binance: 0, okx: 0, coinbase: 0 };
+    this.open24h = { binance: 0, okx: 0, coinbase: 0 };
+    this.openAt = { binance: 0, okx: 0, coinbase: 0 };
+    this.openTriedAt = { binance: 0, okx: 0, coinbase: 0 };
     this.pollT = null;
     this.emitT = null;
     this.dirty = false;
@@ -57,13 +61,36 @@ export class CrossExchangeFeed {
 
   inject(src, price, open24h = 0) {
     if (!this.state[src] || !(price > 0) || !isFinite(price)) return;
+    const now = Date.now();
     const slot = this.state[src];
     slot.price = price;
-    slot.ts = Date.now();
-    if (open24h > 0 && isFinite(open24h)) slot.chg = (price / open24h - 1) * 100;
-    this.state.activeSrc = src;
+    slot.ts = now;
+    this.wsTs[src] = now;
+    if (open24h > 0 && isFinite(open24h)) {
+      this.open24h[src] = open24h;
+      this.openAt[src] = now;
+      this.wsOpenTs[src] = now;
+    }
+    if (this.open24h[src] > 0) slot.chg = (price / this.open24h[src] - 1) * 100;
     this._recompute();
     this._scheduleEmit();
+  }
+
+  _applyRest(src, px, open, reqAt) {
+    const now = Date.now();
+    const slot = this.state[src];
+    if (open > 0 && isFinite(open) && this.wsOpenTs[src] < reqAt) {
+      this.open24h[src] = open;
+      this.openAt[src] = now;
+    }
+    // 仅在 WS 断流且请求期间没有收到新 WS 成交时才用 REST 价格兜底，避免旧价覆写实时价
+    if (px > 0 && isFinite(px) && now - this.wsTs[src] > EX_WS_STALE_MS && this.wsTs[src] < reqAt) {
+      slot.price = px;
+      slot.ts = now;
+    }
+    if (slot.price > 0 && this.open24h[src] > 0) {
+      slot.chg = (slot.price / this.open24h[src] - 1) * 100;
+    }
   }
 
   _recompute() {
@@ -114,7 +141,6 @@ export class CrossExchangeFeed {
       binance: { ...this.state.binance },
       okx: { ...this.state.okx },
       coinbase: { ...this.state.coinbase },
-      activeSrc: this.state.activeSrc,
       cbPremUsd: this.state.cbPremUsd,
       cbPremPct: this.state.cbPremPct,
       okxSpreadUsd: this.state.okxSpreadUsd,
@@ -126,20 +152,20 @@ export class CrossExchangeFeed {
 
   async _poll() {
     const now = Date.now();
-    const need = (s) => s !== this.state.activeSrc || now - this.state[s].ts > 8000;
+    const needPrice = (s) => now - this.wsTs[s] > EX_WS_STALE_MS;
+    const needOpen = (s) => now - this.openAt[s] >= EX_OPEN_MS
+      && now - this.openTriedAt[s] >= (this.open24h[s] > 0 ? EX_OPEN_MS : EX_OPEN_RETRY_MS);
     const tasks = [];
 
-    if (need('binance')) {
+    if (needPrice('binance') || needOpen('binance')) {
+      const reqAt = now;
+      if (needOpen('binance')) this.openTriedAt.binance = reqAt;
       tasks.push((async () => {
         for (const host of BIN_HOSTS) {
           try {
             const t = await binFetch(`${host}/api/v3/ticker/24hr?symbol=BTCUSDT&type=MINI`, 2, 5000);
             if (t && +t.lastPrice > 0) {
-              this.state.binance = {
-                price: +t.lastPrice,
-                chg: +t.openPrice > 0 ? (+t.lastPrice / +t.openPrice - 1) * 100 : null,
-                ts: Date.now(),
-              };
+              this._applyRest('binance', +t.lastPrice, +t.openPrice, reqAt);
               return;
             }
           } catch (e) { if (e.rate) return; }
@@ -147,48 +173,40 @@ export class CrossExchangeFeed {
       })());
     }
 
-    if (need('okx')) {
+    if (needPrice('okx') || needOpen('okx')) {
+      const reqAt = now;
+      if (needOpen('okx')) this.openTriedAt.okx = reqAt;
       tasks.push((async () => {
         try {
           const j = await fetchJson('https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT', 5000);
           const d = j && j.data && j.data[0];
           if (d && +d.last > 0) {
-            this.state.okx = {
-              price: +d.last,
-              chg: +d.open24h > 0 ? (+d.last / +d.open24h - 1) * 100 : null,
-              ts: Date.now(),
-            };
+            this._applyRest('okx', +d.last, +d.open24h, reqAt);
           }
         } catch {}
       })());
     }
 
-    if (need('coinbase')) {
+    if (needPrice('coinbase')) {
+      const reqAt = now;
       tasks.push((async () => {
         try {
           const t = await fetchJson('https://api.exchange.coinbase.com/products/BTC-USD/ticker', 5000);
           if (t && +t.price > 0) {
-            const px = +t.price;
-            this.state.coinbase = {
-              price: px,
-              chg: this.cbOpen > 0 ? (px / this.cbOpen - 1) * 100 : this.state.coinbase.chg,
-              ts: Date.now(),
-            };
+            this._applyRest('coinbase', +t.price, 0, reqAt);
           }
         } catch {}
       })());
     }
 
-    if (now - this.cbStatsAt >= CB_STATS_MS) {
-      this.cbStatsAt = now;
+    if (needOpen('coinbase')) {
+      const reqAt = now;
+      this.openTriedAt.coinbase = reqAt;
       tasks.push((async () => {
         try {
           const st = await fetchJson('https://api.exchange.coinbase.com/products/BTC-USD/stats', 5000);
           if (st && +st.open > 0) {
-            this.cbOpen = +st.open;
-            if (this.state.coinbase.price > 0) {
-              this.state.coinbase.chg = (this.state.coinbase.price / this.cbOpen - 1) * 100;
-            }
+            this._applyRest('coinbase', 0, +st.open, reqAt);
           }
         } catch {}
       })());
